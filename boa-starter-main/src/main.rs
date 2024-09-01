@@ -7,7 +7,7 @@ use sexp::Atom::*;
 use sexp::*;
 
 use im::HashMap;
-// use HashMa
+use std::collections::HashSet;
 
 #[derive(Debug)]
 enum Val {
@@ -106,13 +106,11 @@ fn push_rax_to_stack(instr_vec: &mut Vec<Instr>, rsp_offset: i32) -> i32 {
 fn compile_to_instrs(e: &Expr, scope: &mut VariableScope, instr_vec: &mut Vec<Instr>, rsp_offset: &mut i32) {
     match e {
         Expr::Number(n) => {
-            // *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(*n)));
         },
         Expr::Id(s) => {
             match scope.get(s) {
                 Some(s_rsp_offset) => {
-                    // *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
                     instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, *s_rsp_offset)));
                 },
                 None => panic!("Unbound variable identifier {s}"),
@@ -127,6 +125,7 @@ fn compile_to_instrs(e: &Expr, scope: &mut VariableScope, instr_vec: &mut Vec<In
             };
         },
         Expr::BinOp(op, e1, e2) => {
+            // Compile e2 first so that subtraction works nicely, leaves e1 in rax
             compile_to_instrs(e2, scope, instr_vec, rsp_offset);
             let rsp_offset_e2_eval = push_rax_to_stack(instr_vec, *rsp_offset);
             *rsp_offset = rsp_offset_e2_eval;
@@ -140,23 +139,28 @@ fn compile_to_instrs(e: &Expr, scope: &mut VariableScope, instr_vec: &mut Vec<In
             }
         },
         Expr::Let(bindings, e) => {
+            let original_scope = scope.clone();
+
             // Add the bindings from the scope
-            for (s, e) in bindings {
-                compile_to_instrs(e, scope, instr_vec, rsp_offset);
+            let mut existing_identifiers: HashSet<String> = HashSet::new();
+
+            for (var, var_e) in bindings {
+                compile_to_instrs(var_e, scope, instr_vec, rsp_offset);
                 *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
-        
-                if let Some(_) = scope.insert(s.clone(), *rsp_offset) {
-                    panic!("Duplicate binding: {s}");
+
+                if existing_identifiers.contains(var) {
+                    panic!("Duplicate binding: {var}");
+                } else {
+                    existing_identifiers.insert(var.clone());
+                    scope.insert(var.clone(), *rsp_offset);
                 }
             }
             
             // Compile the expression
             compile_to_instrs(e, scope, instr_vec, rsp_offset);
-
-            // Remove the bindings from the scope
-            bindings.into_iter().for_each(|(s, _)| {
-                scope.remove(s);
-            });
+            
+            // Restore original scope after the let expression is finished
+            *scope = original_scope;
         }
     }
 }
