@@ -1,0 +1,276 @@
+use core::panic;
+use std::env;
+use std::fs::File;
+use std::io::prelude::*;
+
+use sexp::Atom::*;
+use sexp::*;
+
+use im::HashMap;
+// use HashMa
+
+#[derive(Debug)]
+enum Val {
+    Reg(Reg),
+    Imm(i32),
+    RegOffset(Reg, i32),
+}
+
+#[derive(Debug)]
+enum Reg {
+    RAX,
+    RSP,
+}
+
+#[derive(Debug)]
+enum Instr {
+    IMov(Val, Val),
+    IAdd(Val, Val),
+    ISub(Val, Val),
+    IMul(Val, Val),
+}
+
+#[derive(Debug)]
+enum Op1 {
+    Add1,
+    Sub1,
+}
+
+#[derive(Debug)]
+enum Op2 {
+    Plus,
+    Minus,
+    Times,
+}
+
+#[derive(Debug)]
+enum Expr {
+    Number(i32),
+    Id(String),
+    Let(Vec<(String, Expr)>, Box<Expr>),
+    UnOp(Op1, Box<Expr>),
+    BinOp(Op2, Box<Expr>, Box<Expr>),
+}
+
+type VariableScope = HashMap<String, i32>;
+const SIZE_OF_NUMBER: i32 = 8;
+
+/// Parsing expressions
+
+fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp) -> Expr {
+    match b_vec_sexp {
+        Sexp::List(vec) => {
+            let bindings_vector: Vec<(String, Expr)> = vec.into_iter().map(|sexp_list| {
+                match sexp_list {
+                    Sexp::List(vec) => match &vec[..] {
+                        [Sexp::Atom(S(identifier)), e] => (identifier.clone(), parse_expr(e)),
+                        _ => panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)"),
+                    },
+                    _ => panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)"),
+                }
+            })
+            .collect();
+
+            Expr::Let(bindings_vector, Box::new(parse_expr(expr_sexp)))
+        },
+        _ => panic!("Invalid program: malformed let expression (are you missing parens?)"),
+    }
+}
+
+fn parse_expr(s: &Sexp) -> Expr {
+    match s {
+        Sexp::Atom(Atom::F(x)) => panic!("Invalid program: floats are not allowed"),
+        Sexp::Atom(Atom::S(str)) => Expr::Id(str.clone()),
+        Sexp::Atom(Atom::I(x)) => Expr::Number(i32::try_from(*x).unwrap()),
+        Sexp::List(vec) => {
+            match &vec[..] {
+                [Sexp::Atom(S(op)), e] if op == "add1" => Expr::UnOp(Op1::Add1, Box::new(parse_expr(e))),
+                [Sexp::Atom(S(op)), e] if op == "sub1" => Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e))),
+                [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(Op2::Plus, Box::new(parse_expr(e1)), Box::new(parse_expr(e2))),
+                [Sexp::Atom(S(op)), e1, e2] if op == "-" => Expr::BinOp(Op2::Minus, Box::new(parse_expr(e1)), Box::new(parse_expr(e2))),
+                [Sexp::Atom(S(op)), e1, e2] if op == "*" => Expr::BinOp(Op2::Times, Box::new(parse_expr(e1)), Box::new(parse_expr(e2))),
+                [Sexp::Atom(S(op)), b_vec, e] if op == "let" => parse_let_expr(b_vec, e),
+                _ => panic!("Invalid program: malformed expression"),
+            }
+        },
+    }
+}
+
+/// Compiling Exprs
+
+fn push_rax_to_stack(instr_vec: &mut Vec<Instr>, rsp_offset: i32) -> i32 {
+    instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RSP, rsp_offset + SIZE_OF_NUMBER), Val::Reg(Reg::RAX)));
+    rsp_offset + SIZE_OF_NUMBER
+}
+
+fn compile_to_instrs(e: &Expr, scope: &mut VariableScope, instr_vec: &mut Vec<Instr>, rsp_offset: &mut i32) {
+    match e {
+        Expr::Number(n) => {
+            // *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(*n)));
+        },
+        Expr::Id(s) => {
+            match scope.get(s) {
+                Some(s_rsp_offset) => {
+                    // *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
+                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, *s_rsp_offset)));
+                },
+                None => panic!("Unbound variable identifier {s}"),
+            }
+        },
+        Expr::UnOp(op, e) => {
+            compile_to_instrs(e, scope, instr_vec, rsp_offset);
+            
+            match op {
+                Op1::Add1 => instr_vec.push(Instr::IAdd(Val::Reg(Reg::RAX), Val::Imm(1))),
+                Op1::Sub1 => instr_vec.push(Instr::ISub(Val::Reg(Reg::RAX), Val::Imm(1))),
+            };
+        },
+        Expr::BinOp(op, e1, e2) => {
+            compile_to_instrs(e2, scope, instr_vec, rsp_offset);
+            let rsp_offset_e2_eval = push_rax_to_stack(instr_vec, *rsp_offset);
+            *rsp_offset = rsp_offset_e2_eval;
+
+            compile_to_instrs(e1, scope, instr_vec, rsp_offset); // e1 is in rax
+            
+            match op {
+                Op2::Plus => instr_vec.push(Instr::IAdd(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, rsp_offset_e2_eval))),
+                Op2::Minus => instr_vec.push(Instr::ISub(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, rsp_offset_e2_eval))),
+                Op2::Times => instr_vec.push(Instr::IMul(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, rsp_offset_e2_eval))),
+            }
+        },
+        Expr::Let(bindings, e) => {
+            // Add the bindings from the scope
+            for (s, e) in bindings {
+                compile_to_instrs(e, scope, instr_vec, rsp_offset);
+                *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
+        
+                if let Some(_) = scope.insert(s.clone(), *rsp_offset) {
+                    panic!("Duplicate binding: {s}");
+                }
+            }
+            
+            // Compile the expression
+            compile_to_instrs(e, scope, instr_vec, rsp_offset);
+
+            // Remove the bindings from the scope
+            bindings.into_iter().for_each(|(s, _)| {
+                scope.remove(s);
+            });
+        }
+    }
+}
+
+fn compile_instrs_to_str(instr_vec: &Vec<Instr>) -> String {
+    let n_spaces_indentation = 2;
+
+    instr_vec.iter()
+        .map(|i|instr_to_str(i))
+        .map(|s| format!("{}{}", " ".repeat(n_spaces_indentation), s))
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+fn compile(e: &Expr) -> String {
+    let scope = &mut VariableScope::new();
+    let mut instr_vec: Vec<Instr> = Vec::new();
+    let mut rsp_offset = 0;
+
+    compile_to_instrs(e, scope, &mut instr_vec, &mut rsp_offset);
+    compile_instrs_to_str(&instr_vec)
+}
+
+fn instr_to_str(i: &Instr) -> String {
+    match i {
+        Instr::IMov(dst, src) => format!("mov {}, {}", val_to_str(dst), val_to_str(src)),
+        Instr::IAdd(v1, v2) => format!("add {}, {}", val_to_str(v1), val_to_str(v2)),
+        Instr::ISub(v1, v2) => format!("sub {}, {}", val_to_str(v1), val_to_str(v2)),
+        Instr::IMul(v1, v2) => format!("imul {}, {}", val_to_str(v1), val_to_str(v2)),
+    }
+}
+
+fn reg_to_str(r: &Reg) -> String {
+    match r {
+        Reg::RAX => "rax".to_string(),
+        Reg::RSP => "rsp".to_string(),
+    }
+}
+
+fn val_to_str(v: &Val) -> String {
+    match v {
+        Val::Reg(r) => reg_to_str(r),
+        Val::Imm(i) => format!("{}", i),
+        Val::RegOffset(r, i) => format!("[{}-{i}]", reg_to_str(r), i=i),
+    }
+}
+
+fn print_sexp(sexp: &Sexp) {
+    match sexp {
+        Sexp::Atom(s) => println!("Atom({})", s),
+        Sexp::List(list) => {
+            print!("List(");
+            for (i, item) in list.iter().enumerate() {
+                if i > 0 {
+                    print!(", ");
+                }
+                print_sexp(item); // Recursively print each Sexp in the list
+            }
+            print!(")");
+        },
+        // Handle other variants if there are any
+    }
+}
+
+fn main() -> std::io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+
+    let in_name = &args[1];
+    let out_name = &args[2];
+
+    // let in_name = "tests/add.snek".to_string();
+    // let out_name ="tests/micah1.s".to_string();
+
+    let mut in_file = File::open(in_name)?;
+    let mut in_contents = String::new();
+    in_file.read_to_string(&mut in_contents)?;
+
+    // let in_parsed_exp = parse_expr(&parse(&in_contents).unwrap());
+    // print_sexp(&in_sexp);
+
+    // println!("{:?}", in_parsed_exp);
+
+    // You will make result hold the result of actually compiling
+    let result = compile(&parse_expr(&parse(&in_contents).unwrap()));
+
+    let asm_program = format!(
+        "
+section .text
+global our_code_starts_here
+our_code_starts_here:
+{}
+  ret
+",
+        result
+    );
+
+    let mut out_file = File::create(out_name)?;
+    out_file.write_all(asm_program.as_bytes())?;
+
+    Ok(())
+}
+
+// List(
+//     vec![
+//         Atom("let"),
+//         List(vec![
+//             List(vec![Atom("x"), Atom("5")])
+//         ]),
+//         Atom("x")
+//     ]
+// )
+
+// List(
+//     Atom(let),
+//     List(List(Atom(x), Atom(5)), List(Atom(y), Atom(7))),
+//     List(Atom(+), Atom(x), Atom(y))
+// )
