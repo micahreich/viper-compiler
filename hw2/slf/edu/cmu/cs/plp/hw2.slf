@@ -1,0 +1,329 @@
+package edu.cmu.cs.plp;
+
+// this next line seems to be necessary
+// whenever we're importing additional modules
+module hw2 provides
+
+// from the SASyLF standard library
+module Natural = org.sasylf.util.Natural
+
+terminals S R nil cons even odd
+
+syntax
+
+// import natural numbers from SASyLF stdlib
+n = org.sasylf.util.Natural.n ::= 0 | S n
+
+l ::= nil | cons n l
+
+// define convenience syntax for a lot of numbers
+1 := S 0
+2 := S 1
+3 := S 2
+4 := S 3
+5 := S 4
+6 := S 5
+7 := S 6
+8 := S 7
+9 := S 8
+10 := S 9
+11 := S 10
+12 := S 11
+13 := S 12
+14 := S 13
+15 := S 14
+16 := S 15
+17 := S 16
+18 := S 17
+19 := S 18
+20 := S 19
+21 := S 20
+
+// import various judgments from SASyLF stdlib
+judgment equal = Natural.equal: n = n
+judgment plus = Natural.plus: n + n = n
+judgment times = Natural.times: n * n = n
+
+// define a new judgment for divisibility
+
+judgment divides: n | n
+
+n1 * n2 = n
+----------- divides-times
+n1 | n
+
+judgment even: n even
+
+------ even-z
+0 even
+
+n odd
+---------- even-s
+(S n) even
+
+judgment odd: n odd
+
+n even
+--------- odd-s
+(S n) odd
+
+judgment length: #l = n
+
+-------- length-nil
+#nil = 0
+
+#l = n'
+------------------ length-cons
+#(cons n l) = S n'
+
+judgment append: l ++ l = l
+
+------------ append-nil
+nil ++ l = l
+
+l1 ++ l2 = l3
+----------------------------- append-cons
+(cons n l1) ++ l2 = cons n l3
+
+// For all the proofs here, you are strongly
+// encouraged to make use of the lemmas and
+// theorems in the SASyLF standard library!
+// https://github.com/boyland/sasylf/blob/v1.5.1/library/org/sasylf/util/Natural.slf
+
+// You can use them by prefixing their name
+// with "Natural.": for instance,
+// write Natural.times-s to refer to the times-s rule
+// of the times judgment.
+
+// For several of these proofs, you'll want to use
+// case analysis and/or inversion; look for examples
+// of those in Natural.slf (linked above).
+
+lemma seven-divides-twenty-one:
+    exists 7 | 21.
+    // You can prove this entirely using basic
+    // rules, or you can use lemmas/theorems
+    // from the SASyLF standard library in order
+    // to reduce the tedium a bit. Up to you! 
+    
+    d0: 7 * 1 = 7 by lemma Natural.times-right-one on 7
+
+    d1: 7 + 0 = 7 by lemma Natural.plus-right-zero on 7
+    d2: 7 + 1 = 8 by lemma Natural.plus-right-succ on d1
+    d3: 7 + 2 = 9 by lemma Natural.plus-right-succ on d2
+    d4: 7 + 3 = 10 by lemma Natural.plus-right-succ on d3
+    d5: 7 + 4 = 11 by lemma Natural.plus-right-succ on d4
+    d6: 7 + 5 = 12 by lemma Natural.plus-right-succ on d5
+    d7: 7 + 6 = 13 by lemma Natural.plus-right-succ on d6
+    d8: 7 + 7 = 14 by lemma Natural.plus-right-succ on d7
+    d9: 7 + 8 = 15 by lemma Natural.plus-right-succ on d8
+    d10: 7 + 9 = 16 by lemma Natural.plus-right-succ on d9
+    d11: 7 + 10 = 17 by lemma Natural.plus-right-succ on d10
+    d12: 7 + 11 = 18 by lemma Natural.plus-right-succ on d11
+    d13: 7 + 12 = 19 by lemma Natural.plus-right-succ on d12
+    d14: 7 + 13 = 20 by lemma Natural.plus-right-succ on d13
+    d15: 7 + 14 = 21 by lemma Natural.plus-right-succ on d14
+    
+    d16: 7 * 2 = 14 by lemma Natural.times-right-succ on d0, d8
+    d17: 7 * 3 = 21 by lemma Natural.times-right-succ on d16, d15
+
+    proof by rule divides-times on d17
+end lemma
+
+theorem divides-transitive:
+    forall d1: n1 | n2
+    forall d2: n2 | n3
+    exists n1 | n3.
+
+    d3: n1 * n1' = n2 by inversion on d1
+    d4: n2 * n2' = n3 by inversion on d2
+    d5: n1' * n2' = n3' and 
+    d6: n1 * n3' = n3 by theorem Natural.times-associative on d3, d4
+
+    proof by rule divides-times on d6
+end theorem
+
+lemma even-plus-odd-gives-odd:
+    forall d1: n1 even
+    forall d2: n2 odd
+    forall ds: n1 + n2 = n3
+    exists n3 odd.
+
+    
+    proof by induction on d1:
+        case rule 
+            --------- even-z
+            _: 0 even
+            where n1 := 0
+        is
+            d3: n1 + n2 = n2 by rule Natural.plus-z
+            d4: n3 = n2 by theorem Natural.plus-unique on ds, d3
+
+            use inversion of Natural.eq on d4 where n3 := n2
+
+            d5: n3 odd by d2
+        end case
+
+        case rule
+            d4: n1' odd
+            ---------- even-s
+            d5: (S n1') even
+            where
+            n1 := (S n1')
+        is
+            d6: n1'' even by inversion on d4 where n1' := (S n1'')
+            d7: n1'' + n2 = n3'' by theorem Natural.plus-total on n1'', n2
+            d8: n3'' odd by induction hypothesis on d6, d2, d7
+            d9: (S n3'') even by rule even-s on d8
+
+            d12: n1' + n2 = S n3'' by rule Natural.plus-s on d7
+            d13: n1 + n2 = S (S n3'') by rule Natural.plus-s on d12
+
+            d14: n3 = S (S n3'') by theorem Natural.plus-unique on ds, d13
+
+            use inversion of Natural.eq on d14 where n3 := S (S n3'')
+
+            d15: n3 odd by rule odd-s on d9
+        end case
+    end induction
+end lemma
+
+theorem append-associative:
+    forall a1: l1 ++ l2 = l3
+    forall a2: l3 ++ l4 = l7
+    exists l2 ++ l4 = l6
+    and    l1 ++ l6 = l7.
+    // hint: look at the proof for Natural.plus-associative
+    
+    proof by induction on a1:
+        case rule
+            ------------ append-nil
+            _: nil ++ l = l
+            where l1 := nil and l2 := l
+        is
+            a6: l1 ++ l7 = l7 by rule append-nil
+            proof by a2, a6
+        end case
+
+        case rule
+            a1': l1' ++ l2 = l3'
+            ----------------------------- append-cons
+            _: (cons n l1') ++ l2 = cons n l3'
+            where l1 := (cons n l1') and l3 := cons n l3'
+        is
+            a2': l3' ++ l4 = l7' by inversion of append-cons on a2
+            where l7 := cons n l7'
+            a6: l2 ++ l4 = l6 and
+            a7': l1' ++ l6 = l7' by induction hypothesis on a1',a2'
+            a7: (cons n l1') ++ l6 = (cons n l7') by rule append-cons on a7'
+            proof by a6, a7
+        end case
+    end induction
+end theorem
+
+// these next two theorems just prove that length
+// is a function from lists to numbers
+
+theorem length-total:
+    forall l
+    exists #l = n.
+    
+    proof by induction on l:
+        case nil is
+            proof by rule length-nil
+        end case
+
+        case cons n' l' is
+            d1: #l' = n1 by induction hypothesis on l'
+            d2: #l = S n1 by rule length-cons on d1
+        end case
+    end induction
+end theorem
+
+theorem length-unique:
+    forall s1: #l = n1
+    forall s2: #l = n2
+    exists n1 = n2.
+    
+    proof by induction on s1:
+        case rule 
+            --------- length-nil
+            _: #nil = 0
+            where l := nil
+        is
+            proof by case analysis on s2:
+                case rule 
+                    --------- length-nil
+                    _: #nil = 0
+                is
+                    proof by rule Natural.eq
+                end case
+            end case analysis
+        end case
+
+        case rule
+            a1: #l' = n1'
+            ------------------ length-cons
+            _: #(cons n l') = S n1'
+            where l := (cons n l')
+        is
+            proof by case analysis on s2:
+                case rule 
+                    a2: #l' = n2'
+                    ------------------ length-cons
+                    _: #(cons n l') = S n2'
+                is
+                    d3: n1' = n2' by induction hypothesis on a1, a2
+
+                    use inversion of Natural.eq on d3 where n1' := n2'
+                    proof by rule Natural.eq
+                end case
+            end case analysis
+        end case
+
+    end induction
+end theorem
+
+theorem append-sum-length:
+    forall a: l1 ++ l2 = l3
+    forall s1: #l1 = n1
+    forall s2: #l2 = n2
+    forall s3: #l3 = n3
+    exists n1 + n2 = n3.
+
+    proof by induction on a:
+        case rule
+            ------------ append-nil
+            _: nil ++ l = l
+            where l1 := nil and l2 := l and l3 := l
+        is
+            d1: #l1 = 0 by rule length-nil
+            d2: n1 = 0 by theorem length-unique on s1, d1
+            d3: n2 = n3 by theorem length-unique on s2, s3
+
+            use inversion of Natural.eq on d2 where n1 := 0
+            use inversion of Natural.eq on d3 where n2 := n3
+            d4: n1 + n2 = n3 by rule Natural.plus-z 
+        end case
+
+        case rule 
+            a1: l1' ++ l2 = l3'
+            ---------------------------------- append-cons
+            _: (cons n l1') ++ l2 = cons n l3'
+            where l1 := (cons n l1') and l3 := cons n l3'
+        is
+            d18: #l1' = n1' by theorem length-total on l1'
+            d17: #l3' = n3' by theorem length-total on l3'
+            d19: n1' + n2 = n3' by induction hypothesis on a1, d18, s2, d17
+            d20: #l1 = S n1' by rule length-cons on d18
+            d21: #l3 = S n3' by rule length-cons on d17
+            d22: n1 = S n1' by theorem length-unique on s1, d20
+            d23: n3 = S n3' by theorem length-unique on s3, d21
+            
+            use inversion of Natural.eq on d22 where n1 := S n1'
+            use inversion of Natural.eq on d23 where n3 := S n3'
+
+            d25: n1 + n2 = n3 by rule Natural.plus-s on d19
+        end case
+    end induction
+end theorem

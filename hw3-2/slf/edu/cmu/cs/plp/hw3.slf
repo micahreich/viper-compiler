@@ -1,0 +1,450 @@
+package edu.cmu.cs.plp;
+
+module hw3 provides
+
+module Boolean = org.sasylf.util.Boolean
+module Natural = org.sasylf.util.Natural
+
+terminals T F S fn value if then else rec
+
+syntax
+
+b = Boolean.b ::= T | F
+n = Natural.n ::= 0 | S n
+
+e ::= x
+  | fn x { e[x] }
+  | e e
+  | #n // different from the meaning of # in HW2
+  | ?b
+  | e + e
+  | if e then e else e
+  | rec x = e[x]
+  // add other syntactic cases here
+
+// defining a context that binds each variable is required by SASyLF
+// the context is not otherwise used in this homework
+E ::= *
+  |   E, x
+
+judgment plus = Natural.plus: n + n = n
+
+judgment value: e value
+
+-------- val-bool
+?b value
+
+-------- val-nat
+#n value
+
+------------------- val-fn
+fn x { e[x] } value
+
+// big-step
+judgment eval: e => e
+
+/*
+e[rec x = e[x]] => e2
+------------------------------ eval-rec
+rec x = e[x] => e2
+
+e1 => ?T
+e2 => e2'
+--------- eval-if-true
+if e1 then e2 else e3 => e2'
+
+e1 => ?F
+e3 => e3'
+--------- eval-if-false
+if e1 then e2 else e3 => e3'
+*/
+
+e value
+------- eval-val
+e => e
+
+e1 => #n1
+e2 => #n2
+n1 + n2 = n3
+-------------- eval-add
+e1 + e2 => #n3
+
+e1 => fn x { e[x] }
+e2 => e2'
+e[e2'] => e'
+------------------- eval-call
+e1 e2 => e'
+
+// add other big-step rules here
+
+// small-step
+judgment reduce: e -> e
+
+e1 -> e1'
+------------------- c-add-l
+e1 + e2 -> e1' + e2
+
+e1 value
+e2 -> e2'
+------------------- c-add-r
+e1 + e2 -> e1 + e2'
+
+n1 + n2 = n3
+---------------- r-add
+#n1 + #n2 -> #n3
+
+e1 -> e1'
+--------------- c-call-l
+e1 e2 -> e1' e2
+
+e1 value
+e2 -> e2'
+--------------- c-call-r
+e1 e2 -> e1 e2'
+
+e2 value
+--------------------------- r-call
+(fn x { e[x] }) e2 -> e[e2]
+
+e1 -> e1'
+----------------------------------------------- c-if-cond
+if e1 then e2 else e3 -> if e1' then e2 else e3
+
+--------------------------- r-if-true
+if ?T then e1 else e2 -> e1
+
+--------------------------- r-if-false
+if ?F then e1 else e2 -> e2
+
+------------------------------- c-rec
+rec x = e[x] -> e[rec x = e[x]]
+
+
+// add other small-step rules here
+
+judgment multistep: e ->* e
+
+------- multi-self
+e ->* e
+
+e1 -> e2
+e2 ->* e3
+--------- multi-step
+e1 ->* e3
+
+/*
+theorem rec-test1:
+    exists rec x = (#0 + x) -> #0 + (rec x = (#0 + x))
+
+    d1: rec x = (#0 + x) -> #0 + (rec x = (#0 + x)) by rule c-rec
+end theorem
+
+theorem rec-test2:
+    exists (rec x1 = fn x { x }) #0 => #0
+    
+    d0: #0 value by rule val-nat
+    d1: fn x { x } value by rule val-fn
+    d2: fn x { x } => fn x { x } by rule eval-val on d1
+    d3: #0 => #0 by rule eval-val on d0
+    d6: rec x1 = fn x { x } => fn x { x } by rule eval-rec on d2
+    d7: (rec x1 = fn x { x }) #0 => #0 by rule eval-call on d6, d3, d3
+end theorem
+*/
+
+// you should already have the missing pieces
+// of this proof from recitation :)
+theorem eval-always-value:
+    forall d: e1 => e2
+    exists e2 value.
+    proof by induction on d:
+        case rule
+            dv: e1 value
+            ------------ eval-val
+            _: e1 => e1
+            where e2 := e1
+        is
+            proof by dv
+        end case
+        case rule
+            _: e11 => #n1
+            _: e12 => #n2
+            _: n1 + n2 = n3
+            ------------------- eval-add
+            _: e11 + e12 => #n3
+            where e1 := e11 + e12 and e2 := #n3
+        is
+            proof by rule val-nat
+        end case
+        case rule
+            _: e11 => fn x { e[x] }
+            _: e12 => e12'
+            d': e[e12'] => e2
+            ----------------------- eval-call
+            _: e11 e12 => e2
+            where e1 := e11 e12
+        is
+            proof by induction hypothesis on d'
+        end case
+    end induction
+end theorem
+
+
+// this proof is kind of big, and you'll probably need
+// to define a few helper lemmas in order to prove it
+
+lemma c-add-r-multi:
+    forall d1: e1 value
+    forall d2: e2 ->* e2'
+    exists e1 + e2 ->* e1 + e2'.
+
+    proof by induction on d2:
+        case rule
+            --------------- multi-self
+            d3: e2' ->* e2'
+            where e2 := e2'
+        is
+            proof by rule multi-self
+        end case
+
+        case rule
+            d4: e2 -> e2''
+            d5: e2'' ->* e2'
+            --------------- multi-step
+            d6: e2 ->* e2'
+        is
+            d20: e1 + e2'' ->* e1 + e2' by induction hypothesis on d1, d5
+            d21: e1 + e2 -> e1 + e2'' by rule c-add-r on d1, d4
+            proof by rule multi-step on d21, d20
+        end case
+
+    end induction
+end lemma
+
+lemma multi-step-other-direction:
+    forall d1: e1 ->* e2
+    forall d2: e2 -> e3
+    exists e1 ->* e3.
+
+    proof by induction on d1:
+        case rule
+            --------------- multi-self
+            d3: e2 ->* e2
+            where e1 := e2 
+        is
+            d20: e3 ->* e3 by rule multi-self
+            proof by rule multi-step on d2, d20
+        end case
+
+        case rule
+            d4: e1 -> e1'
+            d5: e1' ->* e2
+            --------------- multi-step
+            d6: e1 ->* e2
+        is
+            d21: e1' ->* e3 by induction hypothesis on d5, d2
+            d20: e1 ->* e3 by rule multi-step on d4, d21
+        end case
+    end induction
+end lemma
+
+lemma multi-step-transitive:
+    forall d1: e1 ->* e2
+    forall d2: e2 ->* e3
+    exists e1 ->* e3.
+
+    proof by induction on d1:
+        case rule
+            --------------- multi-self
+            d3: e2 ->* e2
+            where e1 := e2
+        is
+            proof by d2
+        end case
+
+        case rule
+            d4: e1 -> e1'
+            d5: e1' ->* e2
+            --------------- multi-step
+            d6: e1 ->* e2
+        is
+            d20: e1' ->* e3 by induction hypothesis on d5, d2
+            proof by rule multi-step on d4, d20
+        end case
+    end induction
+end lemma
+
+lemma c-call-r-multi:
+    forall d1: e1 value
+    forall d2: e2 ->* e2'
+    exists e1 e2 ->* e1 e2'.
+
+    proof by induction on d2:
+        case rule
+            --------------- multi-self
+            d3: e2' ->* e2'
+            where e2 := e2'
+        is
+            proof by rule multi-self
+        end case
+
+        case rule
+            d4: e2 -> e2''
+            d5: e2'' ->* e2'
+            --------------- multi-step
+            d6: e2 ->* e2'
+        is
+            d20: e1 e2'' ->* e1 e2' by induction hypothesis on d1, d5
+            d21: e1 e2 -> e1 e2'' by rule c-call-r on d1, d4
+            proof by rule multi-step on d21, d20
+        end case
+    end induction
+end lemma
+
+lemma c-call-l-multi:
+    forall d1: e1 ->* e1'
+    forall e2
+    exists e1 e2 ->* e1' e2.
+
+    proof by induction on d1:
+        case rule
+            --------------- multi-self
+            _: e1' ->* e1'
+            where e1 := e1'
+        is
+            proof by rule multi-self
+        end case
+
+        case rule
+            d2: e1 -> e0
+            d3: e0 ->* e1'
+            --------------- multi-step
+            _: e1 ->* e1'
+        is
+            d4: e1 e2 -> e0 e2 by rule c-call-l on d2
+            d5: e0 e2 ->* e1' e2 by induction hypothesis on d3, e2
+            d6: e1 e2 ->* e1' e2 by rule multi-step on d4, d5
+        end case
+    end induction
+end lemma
+
+lemma multi-step-add:
+    forall d1: e0 ->* (# n0)
+    forall d2: e1 ->* (# n1)
+    exists e0 + e1 ->* (# n0) + (# n1).
+
+    proof by induction on d1:
+        case rule
+            --------------- multi-self
+            d3: (# n0) ->* (# n0)
+            where e0 := (# n0)
+        is
+            proof by case analysis on d2:
+                case rule
+                    --------------- multi-self
+                    _: (# n1) ->* (# n1)
+                    where e1 := (# n1)
+                is
+                    proof by rule multi-self
+                end case
+
+                case rule
+                    d4: e1 -> e1'
+                    d5: e1' ->* (# n1)
+                    --------------- multi-step
+                    _: e1 ->* (# n1)
+                is
+                    d20: e0 value by rule val-nat
+                    d21: e0 + e1 -> e0 + e1' by rule c-add-r on d20, d4
+                    d22: e0 + e1' ->* (# n0) + (# n1) by lemma c-add-r-multi on d20, d5
+                    d23: e0 + e1 ->* (# n0) + (# n1) by rule multi-step on d21, d22
+                end case
+            end case analysis
+        end case
+
+        case rule
+            d30: e0 -> e2
+            d31: e2 ->* (# n0)
+            --------------- multi-step
+            d32: e0 ->* (# n0)
+        is
+            d34: e2 + e1 ->* (# n0) + (# n1) by induction hypothesis on d31, d2
+            d35: e0 + e1 -> e2 + e1 by rule c-add-l on d30
+            d36: e0 + e1 ->* (# n0) + (# n1) by rule multi-step on d35, d34
+        end case
+
+    end induction
+end lemma
+
+theorem big-implies-small:
+    forall d: e1 => e2
+    exists e1 ->* e2.
+    
+    proof by induction on d:
+        case rule
+            _: e2 value
+            --------------- eval-val
+            _: e2 => e2
+            where e1 := e2
+        is
+            proof by rule multi-self
+        end case
+
+        case rule
+            d1: e0 => (# n0)
+            d2: e3 => (# n1)
+            d3: n0 + n1 = n2
+            --------------- eval-add
+            _: (e0 + e3) => (# n2)
+            where e1 := (e0 + e3) and e2 := (# n2)
+        is
+            d20: e0 ->* (# n0) by induction hypothesis on d1
+            d21: e3 ->* (# n1) by induction hypothesis on d2
+
+            d22: e0 + e3 ->* (# n0) + (# n1) by lemma multi-step-add on d20, d21
+            d23: (# n0) + (# n1) -> (# n2) by rule r-add on d3
+            d24: (e0 + e3) ->* (# n2) by lemma multi-step-other-direction on d22, d23
+        end case
+
+        case rule
+            d4: e0 => fn x { e3[x] }
+            d5: e4 => e4'
+            d6: e3[e4'] => e2
+            --------------- eval-call
+            d7: (e0 e4) => e2
+            where e1 := (e0 e4)
+        is
+            d20: e0 ->* fn x { e3[x] } by induction hypothesis on d4
+            d21: e4 ->* e4' by induction hypothesis on d5
+            d22: e3[e4'] ->* e2 by induction hypothesis on d6
+
+            d23: fn x { e3[x] } value by rule val-fn
+            d24: e4' value by theorem eval-always-value on d5
+
+            d25: (e0 e4) ->* (fn x { e3[x] }) e4 by lemma c-call-l-multi on d20, e4
+            d26: (fn x { e3[x] }) e4 ->* (fn x { e3[x] }) e4' by lemma c-call-r-multi on d23, d21
+            d27: (fn x { e3[x] }) e4' -> e3[e4'] by rule r-call on d24
+            d28: e3[e4'] ->* e2 by induction hypothesis on d6
+
+            d29: e0 e4 ->* (fn x { e3[x] }) e4' by lemma multi-step-transitive on d25, d26
+            d30: (fn x { e3[x] }) e4' ->* e2 by rule multi-step on d27, d28
+
+            d31: e0 e4 ->* e2 by lemma multi-step-transitive on d29, d30
+        end case        
+    end induction
+end theorem
+
+// There's another half to proving equivalence of big-step
+// and small-step semantics for our language:
+//
+//     theorem small-implies-big:
+//         forall ds: e1 ->* e2
+//         forall dv: e2 value
+//         exists e1 => e2.
+//         proof by unproved
+//     end theorem
+//
+// We're omitting the proof in this homework because SASyLF's
+// unification algorithm has some trouble understanding it.
+// Not required for this homework, but some food for thought:
+// If you were to prove it, though, how would you go about
+// doing so?
