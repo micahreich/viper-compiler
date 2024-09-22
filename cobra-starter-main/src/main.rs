@@ -9,6 +9,8 @@ use sexp::*;
 use im::HashMap;
 use std::collections::HashSet;
 
+use regex::Regex;
+
 #[derive(Debug)]
 enum Val {
     Reg(Reg),
@@ -22,7 +24,7 @@ enum Reg {
     RSP,
     RDI,
     RSI,
-    R10
+    R10,
 }
 
 #[derive(Debug)]
@@ -41,7 +43,7 @@ enum Instr {
     ICMovGreater(Val, Val),
     ICMovGreaterEqual(Val, Val),
     ICall(String),
-    IJumpOverflow(String)
+    IJumpOverflow(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -115,6 +117,15 @@ const RESERVED_KEYWORDS: [&str; 17] = [
     "sub1",
 ];
 
+fn is_valid_identifier(s: &str) -> bool {
+    if RESERVED_KEYWORDS.contains(&s) { return false; }
+
+    let number_regex = Regex::new(r"^\d+(\.\d+)?$").unwrap();
+    if number_regex.is_match(s) { return false; }
+
+    return true;
+}
+
 /// Parsing expressions
 
 fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp) -> Expr {
@@ -155,8 +166,8 @@ fn parse_expr(s: &Sexp) -> Expr {
             } else if str == "false" {
                 Expr::Boolean(false)
             } else {
-                if RESERVED_KEYWORDS.iter().any(|&s| s == str) {
-                    panic!("Invalid program: variable name is a reserved keyword");
+                if !is_valid_identifier(str) {
+                    panic!("Invalid program: variable name is not a valid identifier");
                 } else {
                     Expr::Id(str.clone())
                 }
@@ -223,9 +234,7 @@ fn parse_expr(s: &Sexp) -> Expr {
                 Expr::RepeatUntil(Box::new(parse_expr(e1)), Box::new(parse_expr(e2)))
             }
             _ => match &vec[0] {
-                Sexp::Atom(S(op)) if op == "block" => {
-                    parse_block_expr(&vec[1..])
-                }
+                Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..]),
                 _ => panic!("Invalid program: malformed expression"),
             },
         },
@@ -242,23 +251,25 @@ fn push_rax_to_stack(instr_vec: &mut Vec<Instr>, rsp_offset: i32) -> i32 {
     rsp_offset + SIZE_OF_NUMBER
 }
 
-
 fn compile_to_instrs(
     e: &Expr,
     scope: &mut VariableScope,
     instr_vec: &mut Vec<Instr>,
     rsp_offset: &mut i32,
-    tag_id: &mut i32
+    tag_id: &mut i32,
 ) -> ExprType {
     match e {
         Expr::Boolean(b) => {
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(if *b { 1 } else { 0 })));
+            instr_vec.push(Instr::IMov(
+                Val::Reg(Reg::RAX),
+                Val::Imm(if *b { 1 } else { 0 }),
+            ));
             ExprType::Boolean
-        },
+        }
         Expr::Number(n) => {
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(*n)));
             ExprType::Number
-        },
+        }
         Expr::Id(s) => {
             if s == "input" {
                 instr_vec.push(Instr::IMov(
@@ -274,13 +285,13 @@ fn compile_to_instrs(
                             Val::Reg(Reg::RAX),
                             Val::RegOffset(Reg::RSP, *s_rsp_offset),
                         ));
-        
+
                         *e_type
                     }
                     None => panic!("Unbound variable identifier {s}"),
                 }
             }
-        },
+        }
         Expr::UnOp(op, e) => {
             let e_type = compile_to_instrs(e, scope, instr_vec, rsp_offset, tag_id);
 
@@ -293,8 +304,10 @@ fn compile_to_instrs(
                 Op1::Sub1 => instr_vec.push(Instr::ISub(Val::Reg(Reg::RAX), Val::Imm(1))),
             };
 
+            instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
+
             ExprType::Number
-        },
+        }
         Expr::BinOp(op, e1, e2) => {
             // Compile e2 first so that subtraction works nicely, leaves e1 in rax
             let e2_type = compile_to_instrs(e2, scope, instr_vec, rsp_offset, tag_id);
@@ -310,151 +323,108 @@ fn compile_to_instrs(
                 panic!("Type mismatch for binary operation {:?}", op);
             }
 
-            match op {
-                Op2::Equal => {
-                    instr_vec.push(
-                        Instr::ICmp(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, rsp_offset_e2_eval))
-                    );
+            if matches!(
+                op,
+                Op2::Equal | Op2::Less | Op2::LessEqual | Op2::Greater | Op2::GreaterEqual
+            ) {
+                match op {
+                    Op2::Equal => {
+                        instr_vec.push(Instr::ICmp(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::Imm(0)
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(0)));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::R10),
-                        Val::Imm(1)
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Imm(1)));
 
-                    instr_vec.push(Instr::ICMovEqual(
-                        Val::Reg(Reg::RAX), Val::Reg(Reg::R10)
-                    ));
+                        instr_vec.push(Instr::ICMovEqual(Val::Reg(Reg::RAX), Val::Reg(Reg::R10)));
+                    }
+                    Op2::Less => {
+                        instr_vec.push(Instr::ICmp(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
 
-                    ExprType::Boolean
-                },
-                Op2::Less => {
-                    instr_vec.push(Instr::ICmp(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(0)));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::Imm(0)
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Imm(1)));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::R10),
-                        Val::Imm(1)
-                    ));
+                        instr_vec.push(Instr::ICMovLess(Val::Reg(Reg::RAX), Val::Reg(Reg::R10)));
+                    }
+                    Op2::LessEqual => {
+                        instr_vec.push(Instr::ICmp(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
 
-                    instr_vec.push(Instr::ICMovLess(
-                        Val::Reg(Reg::RAX), Val::Reg(Reg::R10)
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(0)));
 
-                    ExprType::Boolean
-                },
-                Op2::LessEqual => {
-                    instr_vec.push(Instr::ICmp(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Imm(1)));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::Imm(0)
-                    ));
+                        instr_vec.push(Instr::ICMovLessEqual(
+                            Val::Reg(Reg::RAX),
+                            Val::Reg(Reg::R10),
+                        ));
+                    }
+                    Op2::Greater => {
+                        instr_vec.push(Instr::ICmp(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::R10),
-                        Val::Imm(1)
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(0)));
 
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Imm(1)));
 
-                    instr_vec.push(Instr::ICMovLessEqual(
-                        Val::Reg(Reg::RAX),
-                        Val::Reg(Reg::R10)
-                    ));
+                        instr_vec.push(Instr::ICMovGreater(Val::Reg(Reg::RAX), Val::Reg(Reg::R10)));
+                    }
+                    Op2::GreaterEqual => {
+                        instr_vec.push(Instr::ICmp(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
 
-                    ExprType::Boolean
-                },
-                Op2::Greater => {
-                    instr_vec.push(Instr::ICmp(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(0)));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::Imm(0)
-                    ));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Imm(1)));
 
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::R10),
-                        Val::Imm(1)
-                    ));
+                        instr_vec.push(Instr::ICMovGreaterEqual(
+                            Val::Reg(Reg::RAX),
+                            Val::Reg(Reg::R10),
+                        ));
+                    }
+                    _ => unreachable!(),
+                }
 
-                    instr_vec.push(Instr::ICMovGreater(
-                        Val::Reg(Reg::RAX),
-                        Val::Reg(Reg::R10),
-                    ));
+                return ExprType::Boolean;
+            } else if matches!(op, Op2::Plus | Op2::Minus | Op2::Times) {
+                match op {
+                    Op2::Plus => {
+                        instr_vec.push(Instr::IAdd(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
+                    }
+                    Op2::Minus => {
+                        instr_vec.push(Instr::ISub(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
+                    }
+                    Op2::Times => {
+                        instr_vec.push(Instr::IMul(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
+                        ));
+                    }
+                    _ => unreachable!(),
+                }
 
-                    ExprType::Boolean
-                },
-                Op2::GreaterEqual => {
-                    instr_vec.push(Instr::ICmp(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
-
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::Imm(0)
-                    ));
-
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::R10),
-                        Val::Imm(1)
-                    ));
-
-
-                    instr_vec.push(Instr::ICMovGreaterEqual(
-                        Val::Reg(Reg::RAX),
-                        Val::Reg(Reg::R10),
-                    ));
-
-                    ExprType::Boolean
-                },
-                Op2::Plus => {
-                    instr_vec.push(Instr::IAdd(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
-
-                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
-
-                    ExprType::Number
-                },
-                Op2::Minus => {
-                    instr_vec.push(Instr::ISub(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
-
-                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
-
-                    ExprType::Number
-                },
-                Op2::Times => {
-                    instr_vec.push(Instr::IMul(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
-                    ));
-
-                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
-
-                    ExprType::Number
-                },
+                instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
+                return ExprType::Number;
+            } else {
+                panic!("Invalid binary operation {:?}", op);
             }
         }
         Expr::Let(bindings, e) => {
@@ -465,9 +435,9 @@ fn compile_to_instrs(
 
             for (var, var_e) in bindings {
                 if var == "input" {
-                    panic!("Reserved keyword");
+                    panic!("Reserved keyword input used as variable name in let expression");
                 }
-                
+
                 let var_e_type = compile_to_instrs(var_e, scope, instr_vec, rsp_offset, tag_id);
                 *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
 
@@ -486,16 +456,19 @@ fn compile_to_instrs(
             *scope = original_scope;
 
             e_type
-        },
+        }
         Expr::Set(id, e1) => {
             let e1_type = compile_to_instrs(e1, scope, instr_vec, rsp_offset, tag_id);
             let (id_offset, _) = scope.get(id).unwrap();
-            
-            instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RSP, *id_offset), Val::Reg(Reg::RAX)));
+
+            instr_vec.push(Instr::IMov(
+                Val::RegOffset(Reg::RSP, *id_offset),
+                Val::Reg(Reg::RAX),
+            ));
             // scope.insert(id.clone(), (*rsp_offset, e1_type)); // Update the stack offset for variable 'id'
-            
+
             e1_type
-        },
+        }
         Expr::Block(expr_vec) => {
             let mut last_e_type = ExprType::Number;
 
@@ -504,14 +477,14 @@ fn compile_to_instrs(
             }
 
             last_e_type
-        },
+        }
         Expr::If(e1, e2, e3) => {
             let curr_tag_id = *tag_id;
-            
+
             *tag_id += 1;
             // Compile e1
             compile_to_instrs(e1, scope, instr_vec, rsp_offset, tag_id);
-            
+
             instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
             // If e1 evaluates to false, go to e3
             instr_vec.push(Instr::IJumpEqual(format!("else{curr_tag_id}")));
@@ -522,14 +495,14 @@ fn compile_to_instrs(
 
             // Compile e3
             instr_vec.push(Instr::ITag(format!("else{curr_tag_id}")));
-           
+
             compile_to_instrs(e3, scope, instr_vec, rsp_offset, tag_id);
-            
+
             instr_vec.push(Instr::IJump(format!("end{curr_tag_id}")));
-            instr_vec.push(Instr::ITag(format!("end{curr_tag_id}")));        
- 
+            instr_vec.push(Instr::ITag(format!("end{curr_tag_id}")));
+
             return_type
-        },
+        }
         Expr::RepeatUntil(e1, e2) => {
             let curr_tag_id = *tag_id;
 
@@ -546,9 +519,12 @@ fn compile_to_instrs(
             // If e2 returned false, keep going
             instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
             instr_vec.push(Instr::IJumpEqual(format!("loop{curr_tag_id}")));
-            
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, rsp_offset_return)));
-            
+
+            instr_vec.push(Instr::IMov(
+                Val::Reg(Reg::RAX),
+                Val::RegOffset(Reg::RSP, rsp_offset_return),
+            ));
+
             instr_vec.push(Instr::ITag(format!("end{curr_tag_id}")));
 
             return_type
@@ -561,7 +537,7 @@ fn compile_instrs_to_str(instr_vec: &Vec<Instr>) -> String {
 
     instr_vec
         .iter()
-        .map(|i| instr_to_str(i))
+        .map(instr_to_str)
         .map(|s| format!("{}{}", " ".repeat(n_spaces_indentation), s))
         .collect::<Vec<String>>()
         .join("\n")
@@ -573,35 +549,23 @@ fn compile(e: &Expr) -> String {
     let mut rsp_offset = SIZE_OF_NUMBER;
     let mut tag_id = 0;
 
-    instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RSP, SIZE_OF_NUMBER), Val::Reg(Reg::RDI)));
+    // Push the input value to the stack
+    instr_vec.push(Instr::IMov(
+        Val::RegOffset(Reg::RSP, SIZE_OF_NUMBER),
+        Val::Reg(Reg::RDI),
+    ));
 
     let return_type = compile_to_instrs(e, scope, &mut instr_vec, &mut rsp_offset, &mut tag_id);
 
     // Call print function with final result
     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(return_type.to_i32())));
-
+    instr_vec.push(Instr::IMov(
+        Val::Reg(Reg::RSI),
+        Val::Imm(return_type.to_i32()),
+    ));
     instr_vec.push(Instr::ICall("snek_print".to_string()));
-    
-    // match return_type {
-    //     ExprType::Number | ExprType::Boolean => {
-    //         instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-    //         instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(return_type.to_i32())));
 
-    //         instr_vec.push(Instr::ICall("snek_print".to_string()));
-    //     },
-    //     ExprType::Error(errno) => {
-    //         instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(errno)));
-
-    //         instr_vec.push(Instr::ICall("snek_error".to_string()));
-    //     }
-    // };
-
-    // 
-
-    instr_vec.push(Instr::ITag("overflow_error".to_string()));
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), ()));
-
+    // Turn the instructions into a multi-line string
     compile_instrs_to_str(&instr_vec)
 }
 
@@ -619,8 +583,11 @@ fn instr_to_str(i: &Instr) -> String {
         Instr::ICMovLess(v1, v2) => format!("cmovl {}, {}", val_to_str(v1), val_to_str(v2)),
         Instr::ICMovLessEqual(v1, v2) => format!("cmovle {}, {}", val_to_str(v1), val_to_str(v2)),
         Instr::ICMovGreater(v1, v2) => format!("cmovg {}, {}", val_to_str(v1), val_to_str(v2)),
-        Instr::ICMovGreaterEqual(v1, v2) => format!("cmovge {}, {}", val_to_str(v1), val_to_str(v2)),
+        Instr::ICMovGreaterEqual(v1, v2) => {
+            format!("cmovge {}, {}", val_to_str(v1), val_to_str(v2))
+        }
         Instr::ICall(fn_name) => format!("call {}", fn_name),
+        Instr::IJumpOverflow(fn_name) => format!("jo {}", fn_name),
     }
 }
 
@@ -638,44 +605,52 @@ fn val_to_str(v: &Val) -> String {
     match v {
         Val::Reg(r) => reg_to_str(r),
         Val::Imm(i) => format!("{}", i),
-        Val::RegOffset(r, i) => if *i == 0 {
-            format!("[{}]", reg_to_str(r))
-        } else {
-            format!("[{}-{v}]", reg_to_str(r), v = i)
+        Val::RegOffset(r, i) => {
+            if *i == 0 {
+                format!("[{}]", reg_to_str(r))
+            } else {
+                format!("[{}-{v}]", reg_to_str(r), v = i)
+            }
         }
     }
 }
 
 fn main() -> std::io::Result<()> {
-        let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
 
-        let in_name = &args[1];
-        let out_name = &args[2];
+    let in_name = &args[1];
+    let out_name = &args[2];
 
-        let mut in_file = File::open(in_name)?;
-        let mut in_contents = String::new();
-        in_file.read_to_string(&mut in_contents)?;
+    let mut in_file = File::open(in_name)?;
+    let mut in_contents = String::new();
+    in_file.read_to_string(&mut in_contents)?;
 
-        // You will make result hold the result of actually compiling
-        let result = compile(&parse_expr(&parse(&in_contents).unwrap()));
+    // You will make result hold the result of actually compiling
+    let result = compile(&parse_expr(&parse(&in_contents).unwrap()));
 
-        let asm_program = format!("
+    let asm_program = format!(
+        "
 extern snek_print
 extern snek_error
 
 section .text
 global our_code_starts_here
+
+overflow_error:
+  mov rdi, 3
+  call snek_error
+
 our_code_starts_here:
 {}
   ret
 ",
-            result
-        );
+        result
+    );
 
-        let mut out_file = File::create(out_name)?;
-        out_file.write_all(asm_program.as_bytes())?;
+    let mut out_file = File::create(out_name)?;
+    out_file.write_all(asm_program.as_bytes())?;
 
-        Ok(())
+    Ok(())
 
     // let in_name = "/Users/micahreich/Documents/17363/cobra-starter-main/tests/example1.snek";
     // // let out_name = &args[2];
