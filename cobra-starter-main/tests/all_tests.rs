@@ -73,5 +73,25 @@ static_error_tests! {
         name: number_bounds_fail,
         file: "number_bounds_fail.snek",
         expected: "Invalid",
+    },
+    {
+        name: unbound,
+        file: "unbound.snek",
+        expected: "Unbound"
+    },
+    {
+        name: duplicate,
+        file: "duplicate_binding.snek",
+        expected: "Duplicate"
+    },
+    {
+        name: reserved,
+        file: "reserved.snek",
+        expected: "keyword"
+    },
+    {
+        name: reserved_bool,
+        file: "reserved_bool.snek",
+        expected: "keyword"
     }
 }
