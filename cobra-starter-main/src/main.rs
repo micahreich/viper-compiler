@@ -173,7 +173,12 @@ fn parse_expr(s: &Sexp) -> Expr {
                 }
             }
         }
-        Sexp::Atom(Atom::I(x)) => Expr::Number(i32::try_from(*x).unwrap()),
+        Sexp::Atom(Atom::I(x)) => {
+            match i32::try_from(*x) {
+                Ok(val) => Expr::Number(val),
+                Err(_) => panic!("Invalid number; cannot convert to i32"),
+            }
+        },
         Sexp::List(vec) => match &vec[..] {
             [Sexp::Atom(S(op)), e] if op == "add1" => {
                 Expr::UnOp(Op1::Add1, Box::new(parse_expr(e)))
