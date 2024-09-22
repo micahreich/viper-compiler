@@ -11,20 +11,31 @@ extern "C" {
 
 #[export_name = "\x01snek_error"]
 pub extern "C" fn snek_error(errcode: i64) {
-    // TODO: print error message according to writeup
-    eprintln!("an error ocurred {errcode}");
+    let err_string = match errcode {
+        1 => "Failed to parse input as u64",
+        2 => "Unknown type flag",
+        _ => "Unknown error",
+    };
+    
+    eprintln!("an error ocurred {err_string}");
     std::process::exit(1);
 }
 
 #[export_name = "\x01snek_print"]
 pub extern "C" fn snek_print(value: i64, type_flag: u64) {
-    // TODO: print the value according to the writeup
+    match type_flag {
+        0 => if value == 0 { println!("false") } else { println("true") }, // boolean
+        1 => println!("{value}"), // integer
+        _ => snek_error(2),
+    };
 }
 
 
 fn parse_input(input: &str) -> u64 {
-    // TODO: parse the input string into internal value representation
-    0
+    match input.parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => snek_error(1),
+    }
 }
 
 fn main() {
