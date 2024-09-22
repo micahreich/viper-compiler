@@ -14,6 +14,7 @@ pub extern "C" fn snek_error(errcode: i64) {
     let err_string = match errcode {
         1 => "Failed to parse input as u64",
         2 => "Unknown type flag",
+        3 => "Overflow error",
         _ => "Unknown error",
     };
     

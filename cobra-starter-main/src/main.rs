@@ -22,6 +22,7 @@ enum Reg {
     RSP,
     RDI,
     RSI,
+    R10
 }
 
 #[derive(Debug)]
@@ -39,7 +40,8 @@ enum Instr {
     ICMovLessEqual(Val, Val),
     ICMovGreater(Val, Val),
     ICMovGreaterEqual(Val, Val),
-    ICall(String)
+    ICall(String),
+    IJumpOverflow(String)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -79,7 +81,6 @@ enum Expr {
 enum ExprType {
     Number = 0,
     Boolean = 1,
-    Error(i32) = 2,
 }
 
 impl ExprType {
@@ -87,7 +88,6 @@ impl ExprType {
         match self {
             ExprType::Number => 0,
             ExprType::Boolean => 1,
-            ExprType::Error(i32) => 2
         }
     }
 }
@@ -254,21 +254,32 @@ fn compile_to_instrs(
         Expr::Boolean(b) => {
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(if *b { 1 } else { 0 })));
             ExprType::Boolean
-        }
+        },
         Expr::Number(n) => {
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(*n)));
             ExprType::Number
-        }
-        Expr::Id(s) => match scope.get(s) {
-            Some((s_rsp_offset, e_type)) => {
+        },
+        Expr::Id(s) => {
+            if s == "input" {
                 instr_vec.push(Instr::IMov(
                     Val::Reg(Reg::RAX),
-                    Val::RegOffset(Reg::RSP, *s_rsp_offset),
+                    Val::RegOffset(Reg::RSP, SIZE_OF_NUMBER),
                 ));
 
-                *e_type
+                ExprType::Number
+            } else {
+                match scope.get(s) {
+                    Some((s_rsp_offset, e_type)) => {
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RSP, *s_rsp_offset),
+                        ));
+        
+                        *e_type
+                    }
+                    None => panic!("Unbound variable identifier {s}"),
+                }
             }
-            None => panic!("Unbound variable identifier {s}"),
         },
         Expr::UnOp(op, e) => {
             let e_type = compile_to_instrs(e, scope, instr_vec, rsp_offset, tag_id);
@@ -283,7 +294,7 @@ fn compile_to_instrs(
             };
 
             ExprType::Number
-        }
+        },
         Expr::BinOp(op, e1, e2) => {
             // Compile e2 first so that subtraction works nicely, leaves e1 in rax
             let e2_type = compile_to_instrs(e2, scope, instr_vec, rsp_offset, tag_id);
@@ -310,8 +321,13 @@ fn compile_to_instrs(
                         Val::Imm(0)
                     ));
 
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::R10),
+                        Val::Imm(1)
+                    ));
+
                     instr_vec.push(Instr::ICMovEqual(
-                        Val::Reg(Reg::RAX), Val::Imm(1)
+                        Val::Reg(Reg::RAX), Val::Reg(Reg::R10)
                     ));
 
                     ExprType::Boolean
@@ -324,12 +340,16 @@ fn compile_to_instrs(
 
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(0),
+                        Val::Imm(0)
+                    ));
+
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::R10),
+                        Val::Imm(1)
                     ));
 
                     instr_vec.push(Instr::ICMovLess(
-                        Val::Reg(Reg::RAX),
-                        Val::Imm(1),
+                        Val::Reg(Reg::RAX), Val::Reg(Reg::R10)
                     ));
 
                     ExprType::Boolean
@@ -342,12 +362,18 @@ fn compile_to_instrs(
 
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(0),
+                        Val::Imm(0)
                     ));
+
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::R10),
+                        Val::Imm(1)
+                    ));
+
 
                     instr_vec.push(Instr::ICMovLessEqual(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(1),
+                        Val::Reg(Reg::R10)
                     ));
 
                     ExprType::Boolean
@@ -360,12 +386,17 @@ fn compile_to_instrs(
 
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(0),
+                        Val::Imm(0)
+                    ));
+
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::R10),
+                        Val::Imm(1)
                     ));
 
                     instr_vec.push(Instr::ICMovGreater(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(1),
+                        Val::Reg(Reg::R10),
                     ));
 
                     ExprType::Boolean
@@ -378,12 +409,18 @@ fn compile_to_instrs(
 
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(0),
+                        Val::Imm(0)
                     ));
+
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::R10),
+                        Val::Imm(1)
+                    ));
+
 
                     instr_vec.push(Instr::ICMovGreaterEqual(
                         Val::Reg(Reg::RAX),
-                        Val::Imm(1),
+                        Val::Reg(Reg::R10),
                     ));
 
                     ExprType::Boolean
@@ -394,6 +431,8 @@ fn compile_to_instrs(
                         Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
                     ));
 
+                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
+
                     ExprType::Number
                 },
                 Op2::Minus => {
@@ -402,6 +441,8 @@ fn compile_to_instrs(
                         Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
                     ));
 
+                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
+
                     ExprType::Number
                 },
                 Op2::Times => {
@@ -409,6 +450,8 @@ fn compile_to_instrs(
                         Val::Reg(Reg::RAX),
                         Val::RegOffset(Reg::RSP, rsp_offset_e2_eval),
                     ));
+
+                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
 
                     ExprType::Number
                 },
@@ -421,6 +464,10 @@ fn compile_to_instrs(
             let mut existing_identifiers: HashSet<String> = HashSet::new();
 
             for (var, var_e) in bindings {
+                if var == "input" {
+                    panic!("Reserved keyword");
+                }
+                
                 let var_e_type = compile_to_instrs(var_e, scope, instr_vec, rsp_offset, tag_id);
                 *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
 
@@ -442,9 +489,10 @@ fn compile_to_instrs(
         },
         Expr::Set(id, e1) => {
             let e1_type = compile_to_instrs(e1, scope, instr_vec, rsp_offset, tag_id);
-            *rsp_offset = push_rax_to_stack(instr_vec, *rsp_offset);
+            let (id_offset, _) = scope.get(id).unwrap();
             
-            scope.insert(id.clone(), (*rsp_offset, e1_type)); // Update the stack offset for variable 'id'
+            instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RSP, *id_offset), Val::Reg(Reg::RAX)));
+            // scope.insert(id.clone(), (*rsp_offset, e1_type)); // Update the stack offset for variable 'id'
             
             e1_type
         },
@@ -479,7 +527,7 @@ fn compile_to_instrs(
             
             instr_vec.push(Instr::IJump(format!("end{curr_tag_id}")));
             instr_vec.push(Instr::ITag(format!("end{curr_tag_id}")));        
-
+ 
             return_type
         },
         Expr::RepeatUntil(e1, e2) => {
@@ -487,18 +535,22 @@ fn compile_to_instrs(
 
             *tag_id += 1;
             // Do-while loop
-            instr_vec.push(Instr::ITag(format!("loop{tag_id}")));
+            instr_vec.push(Instr::ITag(format!("loop{curr_tag_id}")));
             // Compile e1
             let return_type = compile_to_instrs(e1, scope, instr_vec, rsp_offset, tag_id);
+            let rsp_offset_return = push_rax_to_stack(instr_vec, *rsp_offset);
+            *rsp_offset = rsp_offset_return;
 
             // Compile e2
             compile_to_instrs(e2, scope, instr_vec, rsp_offset, tag_id);
             // If e2 returned false, keep going
             instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
-            instr_vec.push(Instr::IJumpEqual(format!("loop{tag_id}")));
-            instr_vec.push(Instr::ITag(format!("end{tag_id}")));
-
+            instr_vec.push(Instr::IJumpEqual(format!("loop{curr_tag_id}")));
             
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RSP, rsp_offset_return)));
+            
+            instr_vec.push(Instr::ITag(format!("end{curr_tag_id}")));
+
             return_type
         }
     }
@@ -518,24 +570,37 @@ fn compile_instrs_to_str(instr_vec: &Vec<Instr>) -> String {
 fn compile(e: &Expr) -> String {
     let scope = &mut VariableScope::new();
     let mut instr_vec: Vec<Instr> = Vec::new();
-    let mut rsp_offset = 0;
+    let mut rsp_offset = SIZE_OF_NUMBER;
     let mut tag_id = 0;
+
+    instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RSP, SIZE_OF_NUMBER), Val::Reg(Reg::RDI)));
 
     let return_type = compile_to_instrs(e, scope, &mut instr_vec, &mut rsp_offset, &mut tag_id);
 
-    match return_type {
-        ExprType::Number | ExprType::Boolean => {
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(return_type.to_i32())));
+    // Call print function with final result
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(return_type.to_i32())));
 
-            instr_vec.push(Instr::ICall("snek_print".to_string()));
-        },
-        ExprType::Error(errno) => {
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(errno)));
+    instr_vec.push(Instr::ICall("snek_print".to_string()));
+    
+    // match return_type {
+    //     ExprType::Number | ExprType::Boolean => {
+    //         instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+    //         instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(return_type.to_i32())));
 
-            instr_vec.push(Instr::ICall("snek_error".to_string()));
-        }
-    };
+    //         instr_vec.push(Instr::ICall("snek_print".to_string()));
+    //     },
+    //     ExprType::Error(errno) => {
+    //         instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(errno)));
+
+    //         instr_vec.push(Instr::ICall("snek_error".to_string()));
+    //     }
+    // };
+
+    // 
+
+    instr_vec.push(Instr::ITag("overflow_error".to_string()));
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), ()));
 
     compile_instrs_to_str(&instr_vec)
 }
@@ -565,6 +630,7 @@ fn reg_to_str(r: &Reg) -> String {
         Reg::RSP => "rsp".to_string(),
         Reg::RDI => "rdi".to_string(),
         Reg::RSI => "rsi".to_string(),
+        Reg::R10 => "r10".to_string(),
     }
 }
 
