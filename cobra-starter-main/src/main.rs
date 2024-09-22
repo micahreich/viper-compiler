@@ -118,10 +118,14 @@ const RESERVED_KEYWORDS: [&str; 17] = [
 ];
 
 fn is_valid_identifier(s: &str) -> bool {
-    if RESERVED_KEYWORDS.contains(&s) { return false; }
+    if RESERVED_KEYWORDS.contains(&s) {
+        return false;
+    }
 
     let number_regex = Regex::new(r"^\d+(\.\d+)?$").unwrap();
-    if number_regex.is_match(s) { return false; }
+    if number_regex.is_match(s) {
+        return false;
+    }
 
     return true;
 }
@@ -173,11 +177,9 @@ fn parse_expr(s: &Sexp) -> Expr {
                 }
             }
         }
-        Sexp::Atom(Atom::I(x)) => {
-            match i32::try_from(*x) {
-                Ok(val) => Expr::Number(val),
-                Err(_) => panic!("Invalid number; cannot convert to i32"),
-            }
+        Sexp::Atom(Atom::I(x)) => match i32::try_from(*x) {
+            Ok(val) => Expr::Number(val),
+            Err(_) => panic!("Invalid number; cannot convert to i32"),
         },
         Sexp::List(vec) => match &vec[..] {
             [Sexp::Atom(S(op)), e] if op == "add1" => {
