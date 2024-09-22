@@ -17,25 +17,22 @@ pub extern "C" fn snek_error(errcode: i64) {
         _ => "Unknown error",
     };
     
-    eprintln!("an error ocurred {err_string}");
+    eprintln!("an error ocurred: {}", err_string);
     std::process::exit(1);
 }
 
 #[export_name = "\x01snek_print"]
 pub extern "C" fn snek_print(value: i64, type_flag: u64) {
     match type_flag {
-        0 => if value == 0 { println!("false") } else { println("true") }, // boolean
-        1 => println!("{value}"), // integer
+        1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
+        0 => println!("{value}"), // integer
         _ => snek_error(2),
     };
 }
 
 
 fn parse_input(input: &str) -> u64 {
-    match input.parse::<u64>() {
-        Ok(value) => value,
-        Err(_) => snek_error(1),
-    }
+    input.parse::<u64>().unwrap()
 }
 
 fn main() {
@@ -43,6 +40,5 @@ fn main() {
     let input = if args.len() == 2 { &args[1] } else { "0" };
     let input = parse_input(&input);
 
-    let i: u64 = unsafe { our_code_starts_here(input) };
-    println!("{i}");
+    let _ = unsafe { our_code_starts_here(input) };
 }
