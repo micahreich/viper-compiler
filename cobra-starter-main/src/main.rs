@@ -556,11 +556,15 @@ fn compile(e: &Expr) -> String {
     let mut rsp_offset = SIZE_OF_NUMBER;
     let mut tag_id = 0;
 
+    // instr_vec.push(Instr::ISub((Val::Reg(Reg::RSP)), (Val::Imm(8))));
+
     // Push the input value to the stack
     instr_vec.push(Instr::IMov(
         Val::RegOffset(Reg::RSP, SIZE_OF_NUMBER),
         Val::Reg(Reg::RDI),
     ));
+
+    
 
     let return_type = compile_to_instrs(e, scope, &mut instr_vec, &mut rsp_offset, &mut tag_id);
 
