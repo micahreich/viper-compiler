@@ -11,24 +11,41 @@ extern "C" {
 
 #[export_name = "\x01snek_error"]
 pub extern "C" fn snek_error(errcode: i64) {
-    let err_string = match errcode {
-        1 => "failed to parse input as u64",
-        2 => "unknown type flag",
-        3 => "overflow error",
-        _ => "unknown error",
-    };
+    if errcode == 1 {
+        eprintln!("an error ocurred: failed to parse input as u64");
+    } else if errcode == 2 {
+        eprintln!("an error ocurred: unknown type flag");
+    } else if errcode == 3 {
+        eprintln!("an error ocurred: overflow error");
+    } else {
+        eprintln!("an error ocurred: unknown error");
+    }
     
-    eprintln!("an error ocurred: {}", err_string);
+    // let err_string = match errcode {
+    //     1 => "failed to parse input as u64",
+    //     2 => "unknown type flag",
+    //     3 => "overflow error",
+    //     _ => "unknown error",
+    // };
+    
+    // eprintln!("an error ocurred: {}", err_string);
     std::process::exit(1);
 }
 
 #[export_name = "\x01snek_print"]
-pub extern "C" fn snek_print(value: i64, type_flag: u64) {
-    match type_flag {
-        1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
-        0 => println!("{value}"), // integer
-        _ => snek_error(2),
-    };
+pub extern "C" fn snek_print(value: i64, type_kind: u64) -> i64 {
+    // From Piazza
+    fn inner_print(value: i64, type_kind: u64) -> i64 {
+        match type_kind {
+            1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
+            0 => println!("{value}"), // integer
+            _ => snek_error(2),
+        };
+
+        0
+    }
+    
+    inner_print(value, type_kind)
 }
 
 

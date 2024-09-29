@@ -118,7 +118,7 @@ const RESERVED_KEYWORDS: [&str; 17] = [
 ];
 
 fn is_valid_identifier(s: &str) -> bool {
-    if RESERVED_KEYWORDS.contains(&s) {
+    if RESERVED_KEYWORDS.into_iter().any(|k| k == s) {
         return false;
     }
 
@@ -171,7 +171,7 @@ fn parse_expr(s: &Sexp) -> Expr {
                 Expr::Boolean(false)
             } else {
                 if !is_valid_identifier(str) {
-                    panic!("Invalid program: variable name is not a valid identifier");
+                    panic!("Invalid program: variable name is a reserved keyword");
                 } else {
                     Expr::Id(str.clone())
                 }
@@ -441,8 +441,8 @@ fn compile_to_instrs(
             let mut existing_identifiers: HashSet<String> = HashSet::new();
 
             for (var, var_e) in bindings {
-                if var == "input" {
-                    panic!("Reserved keyword input used as variable name in let expression");
+                if var == "input" || !is_valid_identifier(var) {
+                    panic!("Reserved keyword used as variable name in let expression");
                 }
 
                 let var_e_type = compile_to_instrs(var_e, scope, instr_vec, rsp_offset, tag_id);
@@ -556,11 +556,15 @@ fn compile(e: &Expr) -> String {
     let mut rsp_offset = SIZE_OF_NUMBER;
     let mut tag_id = 0;
 
+    // instr_vec.push(Instr::ISub((Val::Reg(Reg::RSP)), (Val::Imm(8))));
+
     // Push the input value to the stack
     instr_vec.push(Instr::IMov(
         Val::RegOffset(Reg::RSP, SIZE_OF_NUMBER),
         Val::Reg(Reg::RDI),
     ));
+
+    
 
     let return_type = compile_to_instrs(e, scope, &mut instr_vec, &mut rsp_offset, &mut tag_id);
 
