@@ -17,31 +17,33 @@ fn main() -> std::io::Result<()> {
     let mut in_contents = String::new();
     in_file.read_to_string(&mut in_contents)?;
 
-    // You will make result hold the result of actually compiling
-    let parsing_result = parsing::parse_expr(&parse(&in_contents).unwrap());
-    let compilation_result = compilation::compile(&parsing_result);
+    in_contents.insert_str(0, "(");
+    in_contents.insert_str(in_contents.len(), ")");
+    let parsing_result = parsing::parse_prog(&parse(&in_contents).unwrap());
 
-    let asm_program = format!(
-        "
-extern snek_print
-extern snek_error
+    // let compilation_result = compilation::compile(&parsing_result);
 
-section .text
-global our_code_starts_here
+    //     let asm_program = format!(
+    //         "
+    // extern snek_print
+    // extern snek_error
 
-overflow_error:
-  mov rdi, 3
-  call snek_error
+    // section .text
+    // global our_code_starts_here
 
-our_code_starts_here:
-{}
-  ret
-",
-        compilation_result
-    );
+    // overflow_error:
+    //   mov rdi, 3
+    //   call snek_error
 
-    let mut out_file = File::create(out_name)?;
-    out_file.write_all(asm_program.as_bytes())?;
+    // our_code_starts_here:
+    // {}
+    //   ret
+    // ",
+    //         compilation_result
+    //     );
+
+    //     let mut out_file = File::create(out_name)?;
+    //     out_file.write_all(asm_program.as_bytes())?;
 
     Ok(())
 }
