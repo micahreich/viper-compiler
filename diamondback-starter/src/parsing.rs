@@ -6,7 +6,11 @@ use sexp::*;
 
 use crate::types::*;
 
-pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> Expr {
+pub fn parse_let_expr(
+    b_vec_sexp: &Sexp,
+    expr_sexp: &Sexp,
+    signatures: &HashMap<String, FunctionSignature>,
+) -> Expr {
     match b_vec_sexp {
         Sexp::List(vec) => {
             let bindings_vector: Vec<(String, Expr)> = vec.iter().map(|sexp_list| {
@@ -26,8 +30,14 @@ pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, signatures: &HashMap<
     }
 }
 
-pub fn parse_block_expr(e_vec_sexp: &[Sexp], signatures: &HashMap<String, FunctionSignature>) -> Expr {
-    let expression_vec: Vec<Expr> = e_vec_sexp.iter().map(|e| parse_expr(e, signatures)).collect();
+pub fn parse_block_expr(
+    e_vec_sexp: &[Sexp],
+    signatures: &HashMap<String, FunctionSignature>,
+) -> Expr {
+    let expression_vec: Vec<Expr> = e_vec_sexp
+        .iter()
+        .map(|e| parse_expr(e, signatures))
+        .collect();
 
     Expr::Block(expression_vec)
 }
@@ -109,9 +119,10 @@ pub fn parse_expr(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> 
                 Box::new(parse_expr(e2, signatures)),
                 Box::new(parse_expr(e3, signatures)),
             ),
-            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => {
-                Expr::RepeatUntil(Box::new(parse_expr(e1, signatures)), Box::new(parse_expr(e2, signatures)))
-            }
+            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => Expr::RepeatUntil(
+                Box::new(parse_expr(e1, signatures)),
+                Box::new(parse_expr(e2, signatures)),
+            ),
             _ => match &vec[0] {
                 Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], signatures),
                 Sexp::Atom(S(func_name)) => {
@@ -124,9 +135,12 @@ pub fn parse_expr(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> 
 
                         Expr::Call(func_signature.clone(), args)
                     } else {
-                        panic!("Invalid program: function call to undefined function: {}", func_name);
+                        panic!(
+                            "Invalid program: function call to undefined function: {}",
+                            func_name
+                        );
                     }
-                },
+                }
                 _ => panic!("Invalid program: malformed expression"),
             },
         },
@@ -173,13 +187,15 @@ pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
                 _ => panic!("Malformed definition"),
             }
 
-            let func_name = if let Sexp::Atom(S(name)) = &vec[1] { name } else {
+            let func_name = if let Sexp::Atom(S(name)) = &vec[1] {
+                name
+            } else {
                 panic!("Malformed definition")
             };
             let func_type = parse_type(&vec[vec.len() - 2]);
 
             let mut func_args: Vec<(String, ExprType)> = Vec::new();
-            
+
             if let Sexp::List(arg_vec) = &vec[2] {
                 for s1 in arg_vec {
                     func_args.push(parse_argument(s1));
@@ -214,8 +230,8 @@ pub fn parse_defn(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> 
                 signature: signatures.get(func_name).unwrap().clone(),
                 body: Box::new(func_body_expr),
             }
-        },
-        _ => panic!("Malformed program")
+        }
+        _ => panic!("Malformed program"),
     }
 }
 
@@ -232,7 +248,10 @@ pub fn parse_prog(s: &Sexp) -> Prog {
                     if name == "fun" {
                         let signature = parse_func_signature(s1);
 
-                        if let Some(_) = function_signatures.insert(signature.name.clone(), signature.clone()) {
+                        if function_signatures
+                            .insert(signature.name.clone(), signature.clone())
+                            .is_some()
+                        {
                             panic!("Duplicate function definition: {}", signature.name);
                         }
                     }
@@ -240,8 +259,6 @@ pub fn parse_prog(s: &Sexp) -> Prog {
             }
         }
     }
-
-    println!("function sigs: {:?}", function_signatures);
 
     let mut functions: Vec<Function> = Vec::new();
 
@@ -251,8 +268,21 @@ pub fn parse_prog(s: &Sexp) -> Prog {
             for s1 in vec {
                 match s1 {
                     Sexp::Atom(_) => {
-                        functions.push(
-                            Function {
+                        functions.push(Function {
+                            signature: FunctionSignature {
+                                name: MAIN_FN_TAG.to_string(),
+                                arg_types: Vec::new(),
+                                return_type: ExprType::Main,
+                            },
+                            body: Box::new(parse_expr(s1, &function_signatures)),
+                        });
+                    }
+                    Sexp::List(sub_vec) => match &sub_vec[0] {
+                        Sexp::Atom(S(name)) if name == "fun" => {
+                            functions.push(parse_defn(s1, &function_signatures));
+                        }
+                        Sexp::Atom(_) => {
+                            functions.push(Function {
                                 signature: FunctionSignature {
                                     name: MAIN_FN_TAG.to_string(),
                                     arg_types: Vec::new(),
@@ -260,22 +290,7 @@ pub fn parse_prog(s: &Sexp) -> Prog {
                                 },
                                 body: Box::new(parse_expr(s1, &function_signatures)),
                             });
-                    },
-                    Sexp::List(sub_vec) => match &sub_vec[0] {
-                        Sexp::Atom(S(name)) if name == "fun" => {
-                            functions.push(parse_defn(&s1, &function_signatures));
                         }
-                        Sexp::Atom(_) => {
-                            functions.push(
-                                Function {
-                                    signature: FunctionSignature {
-                                        name: MAIN_FN_TAG.to_string(),
-                                        arg_types: Vec::new(),
-                                        return_type: ExprType::Main,
-                                    },
-                                    body: Box::new(parse_expr(s1, &function_signatures)),
-                                });
-                        },
                         _ => panic!("Malformed program"),
                     },
                 }

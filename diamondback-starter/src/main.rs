@@ -17,8 +17,8 @@ fn main() -> std::io::Result<()> {
     let mut in_contents = String::new();
     in_file.read_to_string(&mut in_contents)?;
 
-    in_contents.insert_str(0, "(");
-    in_contents.insert_str(in_contents.len(), ")");
+    in_contents.insert(0, '(');
+    in_contents.insert(in_contents.len(), ')');
 
     let parsing_result = parsing::parse_prog(&parse(&in_contents).unwrap());
     let compilation_result = compilation::compile(&parsing_result);

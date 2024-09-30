@@ -4,7 +4,10 @@ use std::collections::HashSet;
 use crate::types::*;
 
 fn push_rax_to_stack(instr_vec: &mut Vec<Instr>, rbp_offset: i32) -> i32 {
-    instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RBP, rbp_offset - SIZE_OF_NUMBER), Val::Reg(Reg::RAX)));
+    instr_vec.push(Instr::IMov(
+        Val::RegOffset(Reg::RBP, rbp_offset - SIZE_OF_NUMBER),
+        Val::Reg(Reg::RAX),
+    ));
     // instr_vec.push(Instr::IPush(Val::Reg(Reg::RAX)));
     rbp_offset - SIZE_OF_NUMBER
 }
@@ -46,9 +49,7 @@ fn compile_to_instrs(
             *rbp_offset = e_rbp_offset;
 
             match op {
-                Op1::Print => { // @mreich TODO check this
-                    println!("e_type: {:?}", e_type);
-
+                Op1::Print => {
                     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RSI),
@@ -59,14 +60,17 @@ fn compile_to_instrs(
                     instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
                     instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
                     instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
-                    
+
                     // Align rsp to 16 bytes
                     instr_vec.push(ALIGN_RSP_16_BYTES);
 
                     instr_vec.push(Instr::ICall("snek_print".to_string()));
 
                     // Print statements should evaluate to the given value
-                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RBP, e_rbp_offset)));
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::RAX),
+                        Val::RegOffset(Reg::RBP, e_rbp_offset),
+                    ));
                 }
                 x => {
                     if e_type != ExprType::Number {
@@ -313,31 +317,31 @@ fn compile_to_instrs(
 
                 evaluated_args_rbp_offsets.push(rbp_offset_arg);
             }
-            
+
             // Move rsp to most recent stack-allocated local variable
             instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
             instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
-            
+
             // Align rsp to 16 bytes
             instr_vec.push(ALIGN_RSP_16_BYTES);
 
             // Reserve space on the stack for the arguments
             instr_vec.push(Instr::ISub(
                 Val::Reg(Reg::RSP),
-                Val::Imm(i32::try_from(stack_space_to_align).unwrap()),
+                Val::Imm(stack_space_to_align),
             ));
 
             // Put the arguments onto the stack in the correct order
-            for i in 0..evaluated_args_rbp_offsets.len() {
-                let rsp_offset: i32 = i32::try_from(i).unwrap() * SIZE_OF_NUMBER; // positive offset from $rsp
+            for (i, arg_rbp_offset) in evaluated_args_rbp_offsets.iter().enumerate() {
+                let rsp_offset = i32::try_from(i).unwrap() * SIZE_OF_NUMBER; // positive offset from $rsp
 
                 // Move the argument from the stack to a temp register
                 instr_vec.push(Instr::IMov(
                     Val::Reg(Reg::R11),
-                    Val::RegOffset(Reg::RBP, evaluated_args_rbp_offsets[i]),
+                    Val::RegOffset(Reg::RBP, *arg_rbp_offset),
                 ));
-                
+
                 instr_vec.push(Instr::IMov(
                     Val::RegOffset(Reg::RSP, rsp_offset),
                     Val::Reg(Reg::R11),
@@ -370,7 +374,11 @@ fn instr_to_str(i: &Instr) -> String {
     match i {
         Instr::IMov(dst, src) => {
             let size_specifier = if let Val::Imm(_) = src { "qword " } else { "" };
-            format!("mov {size_specifier}{}, {}", val_to_str(dst), val_to_str(src))
+            format!(
+                "mov {size_specifier}{}, {}",
+                val_to_str(dst),
+                val_to_str(src)
+            )
         }
         Instr::IAdd(v1, v2) => format!("add {}, {}", val_to_str(v1), val_to_str(v2)),
         Instr::ISub(v1, v2) => format!("sub {}, {}", val_to_str(v1), val_to_str(v2)),
@@ -403,7 +411,6 @@ fn reg_to_str(r: &Reg) -> String {
         Reg::RSI => "rsi".to_string(),
         Reg::R10 => "r10".to_string(),
         Reg::RBP => "rbp".to_string(),
-        Reg::RBX => "rbx".to_string(),
         Reg::R11 => "r11".to_string(),
     }
 }
@@ -419,10 +426,10 @@ fn val_to_str(v: &Val) -> String {
                 let sign_i = if *i < 0 { "-" } else { "+" };
                 format!("[{}{}{}]", reg_to_str(r), sign_i, i.abs())
             }
-        },
+        }
         Val::RegOffsetImm(r, i) => {
             if *i == 0 {
-                format!("{}", reg_to_str(r))
+                reg_to_str(r)
             } else {
                 let sign_i = if *i < 0 { "-" } else { "+" };
                 format!("{}{}{}", reg_to_str(r), sign_i, i.abs())
@@ -445,7 +452,7 @@ fn compile_function_to_instrs(
     // Build the variable scope starting with arguments
     for (i, arg) in func.signature.arg_types.iter().enumerate() {
         let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_NUMBER;
-        scope.insert(arg.0.clone(), (arg_rbp_offset, arg.1.clone()));
+        scope.insert(arg.0.clone(), (arg_rbp_offset, arg.1));
     }
 
     // Add `input` as a local variable if the function being parsed is main
@@ -457,11 +464,11 @@ fn compile_function_to_instrs(
     }
 
     // Compile the function body
-    let evaluated_return_type = compile_to_instrs(&func.body, scope, instr_vec, &mut rbp_offset, tag_id);
+    let evaluated_return_type =
+        compile_to_instrs(&func.body, scope, instr_vec, &mut rbp_offset, tag_id);
 
     // Call print function with final result if this is the main function
     if func.signature.name == MAIN_FN_TAG {
-        println!("evaluated_return_type: {:?}", evaluated_return_type);
         instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
         instr_vec.push(Instr::IMov(
             Val::Reg(Reg::RSI),
@@ -469,7 +476,7 @@ fn compile_function_to_instrs(
         ));
 
         // Ensure 16-byte stack alignment prior to calling snek_print
-        
+
         // Move rsp to most recent stack-allocated local variable
         instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
         instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));

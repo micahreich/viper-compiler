@@ -12,6 +12,7 @@ pub enum Val {
 }
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 pub enum Reg {
     RAX,
     RSP,
@@ -20,7 +21,6 @@ pub enum Reg {
     RSI,
     R10,
     R11,
-    RBX,
 }
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ pub enum Instr {
 pub const FUNCTION_PROLOGUE: [Instr; 2] = [
     Instr::IPush(Val::Reg(Reg::RBP)), // push old rbp to stack
     Instr::IMov(Val::Reg(Reg::RBP), Val::Reg(Reg::RSP)), // set rbp equal to the current rsp
-    // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
+                                      // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
 ];
 
 pub const FUNCTION_EPILOGUE: [Instr; 3] = [
@@ -59,16 +59,10 @@ pub const FUNCTION_EPILOGUE: [Instr; 3] = [
     Instr::IRet,
 ];
 
-pub const ALIGN_RSP_16_BYTES: Instr = Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(0xFFFFFFF0u32 as i32));
+pub const ALIGN_RSP_16_BYTES: Instr =
+    Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(0xFFFFFFF0u32 as i32));
 
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
-
-// pub fn IFunctionCall(n_local_vars: i32) -> Vec<Instr> {
-//     return vec![
-//         Instr::IEnter(n_local_vars * SIZE_OF_NUMBER),
-//         Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(-16))
-//     ]
-// }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Op1 {
@@ -138,7 +132,7 @@ impl FromStr for ExprType {
 pub struct FunctionSignature {
     pub name: String,
     pub arg_types: Vec<(String, ExprType)>,
-    pub return_type: ExprType
+    pub return_type: ExprType,
 }
 
 pub struct Function {
