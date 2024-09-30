@@ -8,6 +8,7 @@ pub enum Val {
     Reg(Reg),
     Imm(i32),
     RegOffset(Reg, i32),
+    RegOffsetImm(Reg, i32),
 }
 
 #[derive(Debug)]
@@ -18,6 +19,7 @@ pub enum Reg {
     RDI,
     RSI,
     R10,
+    R11,
     RBX,
 }
 
@@ -41,24 +43,25 @@ pub enum Instr {
     IJumpOverflow(String),
     IPush(Val),
     IPop(Val),
-    IEnter(i32),
     IRet,
 }
 
-pub const FUNCTION_PROLOGUE: [Instr; 3] = [
+pub const FUNCTION_PROLOGUE: [Instr; 2] = [
     Instr::IPush(Val::Reg(Reg::RBP)), // push old rbp to stack
     Instr::IMov(Val::Reg(Reg::RBP), Val::Reg(Reg::RSP)), // set rbp equal to the current rsp
-    Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
+    // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
 ];
 
-pub const FUNCTION_EPILOGUE: [Instr; 4] = [
-    Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, SIZE_OF_NUMBER)),
+pub const FUNCTION_EPILOGUE: [Instr; 3] = [
+    // Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, -SIZE_OF_NUMBER)), // restore rbx
     Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBP)),
     Instr::IPop(Val::Reg(Reg::RBP)),
     Instr::IRet,
 ];
 
-pub const ALIGN_RSP_16_BYTES: Instr = Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(-16));
+pub const ALIGN_RSP_16_BYTES: Instr = Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(0xFFFFFFF0u32 as i32));
+
+pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 
 // pub fn IFunctionCall(n_local_vars: i32) -> Vec<Instr> {
 //     return vec![
@@ -98,7 +101,7 @@ pub enum Expr {
     RepeatUntil(Box<Expr>, Box<Expr>),
     Set(String, Box<Expr>),
     Block(Vec<Expr>),
-    Call(Function, Vec<Expr>),
+    Call(FunctionSignature, Vec<Expr>),
 }
 
 #[repr(i32)] // Specify the representation
@@ -131,11 +134,15 @@ impl FromStr for ExprType {
     }
 }
 
-#[derive(Debug)]
-pub struct Function {
+#[derive(Debug, Clone)]
+pub struct FunctionSignature {
     pub name: String,
     pub arg_types: Vec<(String, ExprType)>,
-    pub return_type: ExprType,
+    pub return_type: ExprType
+}
+
+pub struct Function {
+    pub signature: FunctionSignature,
     pub body: Box<Expr>,
 }
 
@@ -164,8 +171,6 @@ pub const RESERVED_KEYWORDS: [&str; 17] = [
     "sub1",
 ];
 
-pub const DEFINITIONS: [&str; 1] = ["fun"];
-
 pub fn is_valid_identifier(s: &str) -> bool {
     if RESERVED_KEYWORDS.into_iter().any(|k| k == s) {
         return false;
@@ -179,6 +184,6 @@ pub fn is_valid_identifier(s: &str) -> bool {
     true
 }
 
-pub fn round_up_to_next_multiple_of_16(n: usize) -> usize {
+pub fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
     (n + 15) & !15
 }

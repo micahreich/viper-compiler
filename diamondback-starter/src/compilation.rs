@@ -4,15 +4,9 @@ use std::collections::HashSet;
 use crate::types::*;
 
 fn push_rax_to_stack(instr_vec: &mut Vec<Instr>, rbp_offset: i32) -> i32 {
-    instr_vec.push(Instr::IPush(Val::Reg(Reg::RAX)));
-    // instr_vec.push(Instr::IMov(
-    //     Val::RegOffset(Reg::RBP, rbp_offset + SIZE_OF_NUMBER),
-    //     Val::Reg(Reg::RAX))
-    // );
-
-    // instr_vec.push(value);
-
-    rbp_offset + SIZE_OF_NUMBER
+    instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RBP, rbp_offset - SIZE_OF_NUMBER), Val::Reg(Reg::RAX)));
+    // instr_vec.push(Instr::IPush(Val::Reg(Reg::RAX)));
+    rbp_offset - SIZE_OF_NUMBER
 }
 
 fn compile_to_instrs(
@@ -48,21 +42,31 @@ fn compile_to_instrs(
         Expr::UnOp(op, e) => {
             let e_type: ExprType = compile_to_instrs(e, scope, instr_vec, rbp_offset, tag_id);
 
+            let e_rbp_offset = push_rax_to_stack(instr_vec, *rbp_offset);
+            *rbp_offset = e_rbp_offset;
+
             match op {
-                Op1::Print => {
+                Op1::Print => { // @mreich TODO check this
+                    println!("e_type: {:?}", e_type);
+
                     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RSI),
                         Val::Imm(e_type.to_type_flag()),
                     ));
 
-                    // Ensure 16-byte stack alignment prior to calling snek_print
-                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Reg(Reg::RSP)));
+                    // Move rsp to most recent stack-allocated local variable
+                    instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+                    instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
+                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+                    
+                    // Align rsp to 16 bytes
                     instr_vec.push(ALIGN_RSP_16_BYTES);
 
                     instr_vec.push(Instr::ICall("snek_print".to_string()));
 
-                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBX)));
+                    // Print statements should evaluate to the given value
+                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RBP, e_rbp_offset)));
                 }
                 x => {
                     if e_type != ExprType::Number {
@@ -73,12 +77,12 @@ fn compile_to_instrs(
                         Op1::Sub1 => instr_vec.push(Instr::ISub(Val::Reg(Reg::RAX), Val::Imm(1))),
                         _ => unreachable!(),
                     }
+
+                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
                 }
             };
 
-            instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
-
-            ExprType::Number
+            e_type
         }
         Expr::BinOp(op, e1, e2) => {
             // Compile e2 first so that subtraction works nicely, leaves e1 in rax
@@ -290,48 +294,63 @@ fn compile_to_instrs(
 
             return_type
         }
-        Expr::Call(func, args) => {
-            // Ensure 16-byte stack alignment prior to calling snek_print
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Reg(Reg::RSP)));
-            instr_vec.push(ALIGN_RSP_16_BYTES);
+        Expr::Call(func_sig, args) => {
+            // Ensure 16-byte stack alignment prior to calling function
+            // instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Reg(Reg::RSP)));
 
-            let n_args = func.arg_types.len();
+            let prev_rbp_offset = *rbp_offset;
 
+            let n_args = i32::try_from(args.len()).unwrap();
             let stack_space_to_align = round_up_to_next_multiple_of_16(n_args * SIZE_OF_NUMBER);
 
             // Evaluate all the function arguments
             let mut evaluated_args_rbp_offsets: Vec<i32> = Vec::new();
 
-            for (i, arg_expr) in args.iter().enumerate() {
+            for arg_expr in args {
                 let _arg_type = compile_to_instrs(arg_expr, scope, instr_vec, rbp_offset, tag_id);
                 let rbp_offset_arg = push_rax_to_stack(instr_vec, *rbp_offset);
                 *rbp_offset = rbp_offset_arg;
 
-                evaluated_args_rbp_offsets[i] = rbp_offset_arg;
+                evaluated_args_rbp_offsets.push(rbp_offset_arg);
             }
+            
+            // Move rsp to most recent stack-allocated local variable
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+            instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+            
+            // Align rsp to 16 bytes
+            instr_vec.push(ALIGN_RSP_16_BYTES);
 
             // Reserve space on the stack for the arguments
             instr_vec.push(Instr::ISub(
                 Val::Reg(Reg::RSP),
-                Val::Imm(stack_space_to_align.try_into().unwrap()),
+                Val::Imm(i32::try_from(stack_space_to_align).unwrap()),
             ));
 
             // Put the arguments onto the stack in the correct order
             for i in 0..evaluated_args_rbp_offsets.len() {
-                let rsp_offset: i32 = (i * SIZE_OF_NUMBER).try_into().unwrap();
+                let rsp_offset: i32 = i32::try_from(i).unwrap() * SIZE_OF_NUMBER; // positive offset from $rsp
+
+                // Move the argument from the stack to a temp register
+                instr_vec.push(Instr::IMov(
+                    Val::Reg(Reg::R11),
+                    Val::RegOffset(Reg::RBP, evaluated_args_rbp_offsets[i]),
+                ));
+                
                 instr_vec.push(Instr::IMov(
                     Val::RegOffset(Reg::RSP, rsp_offset),
-                    Val::Imm(rsp_offset),
+                    Val::Reg(Reg::R11),
                 ));
             }
 
             // Call the function
-            instr_vec.push(Instr::ICall(func.name.clone()));
+            instr_vec.push(Instr::ICall(func_sig.name.clone()));
 
-            // Restore stack to initial position before we did anything related to function calling
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBX)));
+            // Restore the rbp_offset to before we allocated space for the arguments
+            *rbp_offset = prev_rbp_offset;
 
-            func.return_type
+            func_sig.return_type
         }
     }
 }
@@ -349,7 +368,10 @@ fn compile_instrs_to_str(instr_vec: &[Instr]) -> String {
 
 fn instr_to_str(i: &Instr) -> String {
     match i {
-        Instr::IMov(dst, src) => format!("mov {}, {}", val_to_str(dst), val_to_str(src)),
+        Instr::IMov(dst, src) => {
+            let size_specifier = if let Val::Imm(_) = src { "qword " } else { "" };
+            format!("mov {size_specifier}{}, {}", val_to_str(dst), val_to_str(src))
+        }
         Instr::IAdd(v1, v2) => format!("add {}, {}", val_to_str(v1), val_to_str(v2)),
         Instr::ISub(v1, v2) => format!("sub {}, {}", val_to_str(v1), val_to_str(v2)),
         Instr::IMul(v1, v2) => format!("imul {}, {}", val_to_str(v1), val_to_str(v2)),
@@ -366,6 +388,10 @@ fn instr_to_str(i: &Instr) -> String {
         }
         Instr::ICall(fn_name) => format!("call {}", fn_name),
         Instr::IJumpOverflow(fn_name) => format!("jo {}", fn_name),
+        Instr::IAnd(v1, v2) => format!("and {}, {}", val_to_str(v1), val_to_str(v2)),
+        Instr::IPush(v) => format!("push {}", val_to_str(v)),
+        Instr::IPop(v) => format!("pop {}", val_to_str(v)),
+        Instr::IRet => "ret".to_string(),
     }
 }
 
@@ -376,6 +402,9 @@ fn reg_to_str(r: &Reg) -> String {
         Reg::RDI => "rdi".to_string(),
         Reg::RSI => "rsi".to_string(),
         Reg::R10 => "r10".to_string(),
+        Reg::RBP => "rbp".to_string(),
+        Reg::RBX => "rbx".to_string(),
+        Reg::R11 => "r11".to_string(),
     }
 }
 
@@ -387,7 +416,16 @@ fn val_to_str(v: &Val) -> String {
             if *i == 0 {
                 format!("[{}]", reg_to_str(r))
             } else {
-                format!("[{}-{v}]", reg_to_str(r), v = i)
+                let sign_i = if *i < 0 { "-" } else { "+" };
+                format!("[{}{}{}]", reg_to_str(r), sign_i, i.abs())
+            }
+        },
+        Val::RegOffsetImm(r, i) => {
+            if *i == 0 {
+                format!("{}", reg_to_str(r))
+            } else {
+                let sign_i = if *i < 0 { "-" } else { "+" };
+                format!("{}{}{}", reg_to_str(r), sign_i, i.abs())
             }
         }
     }
@@ -398,80 +436,88 @@ fn compile_function_to_instrs(
     tag_id: &mut i32,
     instr_vec: &mut Vec<Instr>,
 ) -> ExprType {
-    let scope = &mut VariableScope::new();
-    let mut rbp_offset = SIZE_OF_NUMBER;
-
     // Set up the function prologue for our_code_starts_here
     instr_vec.extend(FUNCTION_PROLOGUE);
 
+    let scope = &mut VariableScope::new();
+    let mut rbp_offset = 0;
+
     // Build the variable scope starting with arguments
-    for (i, arg) in func.arg_types.iter().enumerate() {
-        let rbp_offset: i32 = -(i32::try_from(i).unwrap() * SIZE_OF_NUMBER);
-        scope.insert(arg.0.clone(), (rbp_offset, arg.1.clone()));
+    for (i, arg) in func.signature.arg_types.iter().enumerate() {
+        let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_NUMBER;
+        scope.insert(arg.0.clone(), (arg_rbp_offset, arg.1.clone()));
+    }
+
+    // Add `input` as a local variable if the function being parsed is main
+    if func.signature.name == MAIN_FN_TAG {
+        instr_vec.push(Instr::IPush(Val::Reg(Reg::RDI)));
+        rbp_offset -= SIZE_OF_NUMBER;
+
+        scope.insert("input".to_string(), (rbp_offset, ExprType::Number));
     }
 
     // Compile the function body
-    let _evaluated_return_type = compile_to_instrs(
-        &func.body,
-        scope,
-        instr_vec,
-        &mut rbp_offset,
-        tag_id,
-    );
+    let evaluated_return_type = compile_to_instrs(&func.body, scope, instr_vec, &mut rbp_offset, tag_id);
+
+    // Call print function with final result if this is the main function
+    if func.signature.name == MAIN_FN_TAG {
+        println!("evaluated_return_type: {:?}", evaluated_return_type);
+        instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+        instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RSI),
+            Val::Imm(evaluated_return_type.to_type_flag()),
+        ));
+
+        // Ensure 16-byte stack alignment prior to calling snek_print
+        
+        // Move rsp to most recent stack-allocated local variable
+        instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+        instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));
+        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+
+        instr_vec.push(ALIGN_RSP_16_BYTES);
+        instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+        // instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBX)));
+    };
 
     instr_vec.extend(FUNCTION_EPILOGUE);
 
-    func.return_type
+    func.signature.return_type
 }
 
 pub fn compile(p: &Prog) -> String {
     // Compile all functions to instruction strings
     let mut tag_id: i32 = 0;
-    let mut asm_string: String = String::new();
+    let mut asm_string: String = "
+extern snek_print
+extern snek_error
+
+section .text
+global our_code_starts_here
+
+overflow_error:
+  mov rdi, 3
+  and rsp, -16
+  call snek_error
+"
+    .to_string();
 
     for func in p {
         let mut instr_vec: Vec<Instr> = Vec::new();
         let _func_return_type = compile_function_to_instrs(func, &mut tag_id, &mut instr_vec);
-        
-        let asm_func_string = format!("
+
+        let asm_func_string = format!(
+            "
 {}:
 {}
-    ret
 ",
-            func.name,
+            func.signature.name,
             compile_instrs_to_str(&instr_vec)
         );
 
         asm_string.push_str(&asm_func_string);
     }
 
-
-    "".to_string()
-
-    // let scope = &mut VariableScope::new();
-    // let mut rbp_offset = SIZE_OF_NUMBER;
-    // let mut tag_id = 0;
-
-    // // Set up the function prologue for our_code_starts_here
-    // instr_vec.extend(FUNCTION_PROLOGUE);
-
-    // // Push the input value to the stack and add to scope
-    // instr_vec.push(Instr::IMov(
-    //     Val::RegOffset(Reg::RBP, SIZE_OF_NUMBER),
-    //     Val::Reg(Reg::RDI),
-    // ));
-    // scope.insert("input".to_string(), (SIZE_OF_NUMBER, ExprType::Number));
-
-    // let return_type = compile_to_instrs(e, scope, &mut instr_vec, &mut rbp_offset, &mut tag_id);
-
-    // // Call print function with final result
-    // instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-    // instr_vec.push(Instr::IMov(
-    //     Val::Reg(Reg::RSI),
-    //     Val::Imm(return_type.to_type_flag()),
-    // ));
-    // instr_vec.push(Instr::ICall("snek_print".to_string()));
-
-    // // Turn the instructions into a multi-line string
-    // compile_instrs_to_str(&instr_vec)
+    asm_string
 }

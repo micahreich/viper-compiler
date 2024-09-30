@@ -1,5 +1,7 @@
 UNAME := $(shell uname)
 
+.PRECIOUS: tests/%.s
+
 ifeq ($(UNAME), Linux)
 ARCH := elf64
 endif

@@ -33,21 +33,13 @@ pub extern "C" fn snek_error(errcode: i64) {
 }
 
 #[export_name = "\x01snek_print"]
-pub extern "C" fn snek_print(value: i64, type_kind: u64) -> i64 {
-    // From Piazza
-    fn inner_print(value: i64, type_kind: u64) -> i64 {
-        match type_kind {
-            1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
-            0 => println!("{value}"), // integer
-            _ => snek_error(2),
-        };
-
-        0
-    }
-    
-    inner_print(value, type_kind)
+pub extern "C" fn snek_print(value: i64, type_kind: u64) {
+    match type_kind {
+        1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
+        0 => println!("{value}"), // integer
+        _ => snek_error(2),
+    };
 }
-
 
 fn parse_input(input: &str) -> u64 {
     input.parse::<u64>().unwrap()
@@ -59,5 +51,4 @@ fn main() {
     let input = parse_input(&input);
 
     let i: u64 = unsafe { our_code_starts_here(input) };
-    println!("{i}");
 }

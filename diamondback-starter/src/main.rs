@@ -19,31 +19,12 @@ fn main() -> std::io::Result<()> {
 
     in_contents.insert_str(0, "(");
     in_contents.insert_str(in_contents.len(), ")");
+
     let parsing_result = parsing::parse_prog(&parse(&in_contents).unwrap());
+    let compilation_result = compilation::compile(&parsing_result);
 
-    // let compilation_result = compilation::compile(&parsing_result);
-
-    //     let asm_program = format!(
-    //         "
-    // extern snek_print
-    // extern snek_error
-
-    // section .text
-    // global our_code_starts_here
-
-    // overflow_error:
-    //   mov rdi, 3
-    //   call snek_error
-
-    // our_code_starts_here:
-    // {}
-    //   ret
-    // ",
-    //         compilation_result
-    //     );
-
-    //     let mut out_file = File::create(out_name)?;
-    //     out_file.write_all(asm_program.as_bytes())?;
+    let mut out_file = File::create(out_name)?;
+    out_file.write_all(compilation_result.as_bytes())?;
 
     Ok(())
 }
