@@ -450,7 +450,14 @@ fn compile_function_to_instrs(
     let mut rbp_offset = 0;
 
     // Build the variable scope starting with arguments
+
+    let mut existing_identifiers: HashSet<String> = HashSet::new();
+
     for (i, arg) in func.signature.arg_types.iter().enumerate() {
+        if existing_identifiers.contains(&arg.0) {
+            panic!("Duplicate param");
+        }
+        existing_identifiers.insert(arg.0.to_string());
         let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_NUMBER;
         scope.insert(arg.0.clone(), (arg_rbp_offset, arg.1));
     }

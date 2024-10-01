@@ -14,5 +14,6 @@
   )
 )
 (block
+  (print input)
   (print (iseven input))
 )
