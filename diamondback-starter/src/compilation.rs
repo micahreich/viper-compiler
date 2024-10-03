@@ -40,7 +40,7 @@ fn compile_to_instrs(
 
                 *e_type
             }
-            None => panic!("Unbound variable identifier {s}"),
+            None => panic!("Invalid: Unbound variable identifier {s}"),
         },
         Expr::UnOp(op, e) => {
             let e_type: ExprType = compile_to_instrs(e, scope, instr_vec, rbp_offset, tag_id);

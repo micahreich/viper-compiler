@@ -244,6 +244,9 @@ pub fn parse_prog(s: &Sexp) -> Prog {
     if let Sexp::List(vec) = s {
         for s1 in vec {
             if let Sexp::List(sub_vec) = s1 {
+                if sub_vec.len() == 0 {
+                    panic!("Invalid: empty expression");
+                }
                 if let Sexp::Atom(S(name)) = &sub_vec[0] {
                     if name == "fun" {
                         let signature = parse_func_signature(s1);
