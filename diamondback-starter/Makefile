@@ -15,7 +15,9 @@ tests/%.s: tests/%.snek src/main.rs
 tests/%.run: tests/%.s runtime/start.rs
 	nasm -f $(ARCH) tests/$*.s -o tests/$*.o
 	ar rcs tests/lib$*.a tests/$*.o
-	rustc -L tests/ -lour_code:$* runtime/start.rs -o tests/$*.run --target=x86_64-apple-darwin
+	rustc -L tests/ -lour_code:$* runtime/start.rs -o tests/$*.run
+
+# --target=x86_64-apple-darwin
 
 .PHONY: test
 test:

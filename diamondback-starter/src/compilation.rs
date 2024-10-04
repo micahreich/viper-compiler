@@ -99,7 +99,7 @@ fn compile_to_instrs(
             // Perform some type checking on the arguments
             if *op == Op2::Equal && e1_type != e2_type {
                 panic!("Type mismatch in equality comparison");
-            } else if e1_type != ExprType::Number || e2_type != ExprType::Number {
+            } else if (*op != Op2::Equal) && !(e1_type == ExprType::Number && e2_type == ExprType::Number) {
                 panic!("Type mismatch for binary operation {:?}", op);
             }
 
@@ -192,7 +192,7 @@ fn compile_to_instrs(
                 }
 
                 instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
-                return ExprType::Number;
+                ExprType::Number
             } else {
                 panic!("Invalid binary operation {:?}", op);
             }
