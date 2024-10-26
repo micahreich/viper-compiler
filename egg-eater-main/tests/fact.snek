@@ -1,0 +1,16 @@
+(fun fact ((n int)) int
+  (let
+    ((i 1) (acc 1))
+    (repeat-until
+      (if (< i n)
+        (block
+          (set! i (+ i 1))
+          (set! acc (* acc i))
+        )
+        acc
+      )
+      (>= i n)
+    )
+  )
+)
+(fact input)

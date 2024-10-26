@@ -43,7 +43,7 @@ fn x { e[x] } value
 // big-step
 judgment eval: e => e
 
-/*
+
 e[rec x = e[x]] => e2
 ------------------------------ eval-rec
 rec x = e[x] => e2
@@ -57,7 +57,7 @@ e1 => ?F
 e3 => e3'
 --------- eval-if-false
 if e1 then e2 else e3 => e3'
-*/
+
 
 e value
 ------- eval-val
@@ -132,7 +132,7 @@ e2 ->* e3
 --------- multi-step
 e1 ->* e3
 
-/*
+
 theorem rec-test1:
     exists rec x = (#0 + x) -> #0 + (rec x = (#0 + x))
 
@@ -149,7 +149,7 @@ theorem rec-test2:
     d6: rec x1 = fn x { x } => fn x { x } by rule eval-rec on d2
     d7: (rec x1 = fn x { x }) #0 => #0 by rule eval-call on d6, d3, d3
 end theorem
-*/
+
 
 // you should already have the missing pieces
 // of this proof from recitation :)
