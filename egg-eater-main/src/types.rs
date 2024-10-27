@@ -8,7 +8,6 @@ pub enum Val {
     Reg(Reg),
     Imm(i32),
     RegOffset(Reg, i32),
-    RegOffsetImm(Reg, i32),
 }
 
 #[derive(Debug)]
@@ -44,6 +43,7 @@ pub enum Instr {
     IPush(Val),
     IPop(Val),
     IRet,
+    IComment(String),
 }
 
 pub const FUNCTION_PROLOGUE: [Instr; 2] = [
@@ -95,23 +95,29 @@ pub enum Expr {
     RepeatUntil(Box<Expr>, Box<Expr>),
     Set(String, Box<Expr>),
     Block(Vec<Expr>),
+    RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     Call(FunctionSignature, Vec<Expr>),
+    Lookup(Box<Expr>, String), // recordpointer, fieldname
 }
 
 #[repr(i32)] // Specify the representation
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExprType {
     Number = 0,
     Boolean = 1,
-    Main = 2,
+    RecordPointer(String) = 2,
+    Main = 3,
+    RecordNullPtr = 4,
 }
 
 impl ExprType {
-    pub fn to_type_flag(self) -> i32 {
+    pub fn to_type_flag(&self) -> i32 {
         match self {
             ExprType::Number => 0,
             ExprType::Boolean => 1,
-            ExprType::Main => 2,
+            ExprType::RecordPointer(_) => 2,
+            ExprType::Main => 3,
+            ExprType::RecordNullPtr => 4,
         }
     }
 }
@@ -123,9 +129,15 @@ impl FromStr for ExprType {
         match s {
             "int" => Ok(ExprType::Number),
             "bool" => Ok(ExprType::Boolean),
-            _ => Err(format!("Unexpected type: {}", s)),
+            _ => Ok(ExprType::RecordPointer(s.to_string())),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordSignature {
+    pub name: String,
+    pub field_types: Vec<(String, ExprType)>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +157,7 @@ pub type Prog = Vec<Function>;
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
 pub const SIZE_OF_NUMBER: i32 = 8;
 
-pub const RESERVED_KEYWORDS: [&str; 17] = [
+pub const RESERVED_KEYWORDS: [&str; 18] = [
     "let",
     "set!",
     "if",
@@ -163,6 +175,7 @@ pub const RESERVED_KEYWORDS: [&str; 17] = [
     "=",
     "add1",
     "sub1",
+    "alloc",
 ];
 
 pub fn is_valid_identifier(s: &str) -> bool {
@@ -180,4 +193,9 @@ pub fn is_valid_identifier(s: &str) -> bool {
 
 pub fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
     (n + 15) & !15
+}
+
+pub struct ProgDefns {
+    pub fn_signatures: HashMap<String, FunctionSignature>,
+    pub record_signatures: HashMap<String, RecordSignature>,
 }

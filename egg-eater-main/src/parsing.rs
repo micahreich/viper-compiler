@@ -6,17 +6,13 @@ use sexp::*;
 
 use crate::types::*;
 
-pub fn parse_let_expr(
-    b_vec_sexp: &Sexp,
-    expr_sexp: &Sexp,
-    signatures: &HashMap<String, FunctionSignature>,
-) -> Expr {
+pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, ctx: &ProgDefns) -> Expr {
     match b_vec_sexp {
         Sexp::List(vec) => {
             let bindings_vector: Vec<(String, Expr)> = vec.iter().map(|sexp_list| {
                 match sexp_list {
                     Sexp::List(vec) => match &vec[..] {
-                        [Sexp::Atom(S(identifier)), e] => (identifier.clone(), parse_expr(e, signatures)),
+                        [Sexp::Atom(S(identifier)), e] => (identifier.clone(), parse_expr(e, ctx)),
                         _ => panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)"),
                     },
                     _ => panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)"),
@@ -24,25 +20,21 @@ pub fn parse_let_expr(
             })
             .collect();
 
-            Expr::Let(bindings_vector, Box::new(parse_expr(expr_sexp, signatures)))
+            Expr::Let(bindings_vector, Box::new(parse_expr(expr_sexp, ctx)))
         }
         _ => panic!("Invalid program: malformed let expression (are you missing parens?)"),
     }
 }
 
-pub fn parse_block_expr(
-    e_vec_sexp: &[Sexp],
-    signatures: &HashMap<String, FunctionSignature>,
-) -> Expr {
-    let expression_vec: Vec<Expr> = e_vec_sexp
-        .iter()
-        .map(|e| parse_expr(e, signatures))
-        .collect();
+pub fn parse_block_expr(e_vec_sexp: &[Sexp], ctx: &ProgDefns) -> Expr {
+    let expression_vec: Vec<Expr> = e_vec_sexp.iter().map(|e| parse_expr(e, ctx)).collect();
 
     Expr::Block(expression_vec)
 }
 
-pub fn parse_expr(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> Expr {
+pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
+    println!("parsing: {:?}", s);
+
     match s {
         Sexp::Atom(Atom::F(_)) => panic!("Invalid program: floats are not allowed"),
         Sexp::Atom(Atom::S(str)) => {
@@ -62,82 +54,92 @@ pub fn parse_expr(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> 
         },
         Sexp::List(vec) => match &vec[..] {
             [Sexp::Atom(S(op)), e] if op == "add1" => {
-                Expr::UnOp(Op1::Add1, Box::new(parse_expr(e, signatures)))
+                Expr::UnOp(Op1::Add1, Box::new(parse_expr(e, ctx)))
             }
             [Sexp::Atom(S(op)), e] if op == "sub1" => {
-                Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e, signatures)))
+                Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e, ctx)))
             }
             [Sexp::Atom(S(op)), e] if op == "print" => {
-                Expr::UnOp(Op1::Print, Box::new(parse_expr(e, signatures)))
+                Expr::UnOp(Op1::Print, Box::new(parse_expr(e, ctx)))
+            }
+            [Sexp::Atom(S(op)), e1, Sexp::Atom(S(field))] if op == "lookup" => {
+                Expr::Lookup(Box::new(parse_expr(e1, ctx)), field.clone())
             }
             [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(
                 Op2::Plus,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "-" => Expr::BinOp(
                 Op2::Minus,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "*" => Expr::BinOp(
                 Op2::Times,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "<" => Expr::BinOp(
                 Op2::Less,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "<=" => Expr::BinOp(
                 Op2::LessEqual,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == ">" => Expr::BinOp(
                 Op2::Greater,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == ">=" => Expr::BinOp(
                 Op2::GreaterEqual,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "=" => Expr::BinOp(
                 Op2::Equal,
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
             ),
-            [Sexp::Atom(S(op)), b_vec, e] if op == "let" => parse_let_expr(b_vec, e, signatures),
+            [Sexp::Atom(S(op)), b_vec, e] if op == "let" => parse_let_expr(b_vec, e, ctx),
             [Sexp::Atom(S(op)), Sexp::Atom(S(name)), e1] if op == "set!" => {
-                Expr::Set(name.clone(), Box::new(parse_expr(e1, signatures)))
+                Expr::Set(name.clone(), Box::new(parse_expr(e1, ctx)))
             }
             [Sexp::Atom(S(op)), e1, e2, e3] if op == "if" => Expr::If(
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
-                Box::new(parse_expr(e3, signatures)),
+                Box::new(parse_expr(e1, ctx)),
+                Box::new(parse_expr(e2, ctx)),
+                Box::new(parse_expr(e3, ctx)),
             ),
-            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => Expr::RepeatUntil(
-                Box::new(parse_expr(e1, signatures)),
-                Box::new(parse_expr(e2, signatures)),
-            ),
+            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => {
+                Expr::RepeatUntil(Box::new(parse_expr(e1, ctx)), Box::new(parse_expr(e2, ctx)))
+            }
             _ => match &vec[0] {
-                Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], signatures),
-                Sexp::Atom(S(func_name)) => {
-                    if let Some(func_signature) = signatures.get(func_name) {
+                Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], ctx),
+                Sexp::Atom(S(name)) => {
+                    if let Some(func_signature) = ctx.fn_signatures.get(name) {
                         let mut args: Vec<Expr> = Vec::new();
 
                         for i in 0..func_signature.arg_types.len() {
-                            args.push(parse_expr(&vec[i + 1], signatures));
+                            args.push(parse_expr(&vec[i + 1], ctx));
                         }
 
                         Expr::Call(func_signature.clone(), args)
+                    } else if let Some(record_signature) = ctx.record_signatures.get(name) {
+                        let mut args: Vec<Expr> = Vec::new();
+
+                        for i in 0..record_signature.field_types.len() {
+                            args.push(parse_expr(&vec[i + 1], ctx));
+                        }
+
+                        Expr::RecordInitializer(name.clone(), args)
                     } else {
                         panic!(
-                            "Invalid program: function call to undefined function: {}",
-                            func_name
+                            "Invalid program: function call or record initialization to undefined: {}",
+                            name
                         );
                     }
                 }
@@ -174,6 +176,43 @@ pub fn parse_argument(s: &Sexp) -> (String, ExprType) {
     }
 }
 
+pub fn parse_record_signature(s: &Sexp) -> RecordSignature {
+    match s {
+        Sexp::Atom(_) => panic!("Malformed definition"),
+        Sexp::List(vec) => {
+            match &vec[0] {
+                Sexp::Atom(S(name)) => {
+                    if name != "record" {
+                        panic!("Malformed record definition, expecting function definition with keyword `record`");
+                    }
+                }
+                _ => panic!("Malformed definition"),
+            }
+
+            let record_name = if let Sexp::Atom(S(name)) = &vec[1] {
+                name
+            } else {
+                panic!("Malformed definition")
+            };
+
+            let mut record_fields: Vec<(String, ExprType)> = Vec::new();
+
+            if let Sexp::List(arg_vec) = &vec[2] {
+                for s1 in arg_vec {
+                    record_fields.push(parse_argument(s1));
+                }
+            } else {
+                panic!("Malformed definition: expecting argument list after function name");
+            }
+
+            RecordSignature {
+                name: record_name.to_string(),
+                field_types: record_fields,
+            }
+        }
+    }
+}
+
 pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
     match s {
         Sexp::Atom(_) => panic!("Malformed definition"),
@@ -181,7 +220,7 @@ pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
             match &vec[0] {
                 Sexp::Atom(S(name)) => {
                     if name != "fun" {
-                        panic!("Malformed definition, expecting function definition with keyword `fun`");
+                        panic!("Malformed function definition, expecting function definition with keyword `fun`");
                     }
                 }
                 _ => panic!("Malformed definition"),
@@ -213,7 +252,7 @@ pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
     }
 }
 
-pub fn parse_defn(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> Function {
+pub fn parse_defn(s: &Sexp, ctx: &ProgDefns) -> Function {
     // Right now this function only works for pasing functions, will need to update
     // if defintions ever contain more than functions
 
@@ -224,10 +263,10 @@ pub fn parse_defn(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> 
                 _ => panic!("Malformed definition"),
             };
 
-            let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], signatures);
+            let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], ctx);
 
             Function {
-                signature: signatures.get(func_name).unwrap().clone(),
+                signature: ctx.fn_signatures.get(func_name).unwrap().clone(),
                 body: Box::new(func_body_expr),
             }
         }
@@ -235,11 +274,12 @@ pub fn parse_defn(s: &Sexp, signatures: &HashMap<String, FunctionSignature>) -> 
     }
 }
 
-pub fn parse_prog(s: &Sexp) -> Prog {
+pub fn parse_prog(s: &Sexp) -> (Prog, ProgDefns) {
     // Prog is made up of a series of definitions (funcs) and an expression
 
-    // First go through program looking for function definitions to fill in signatures
+    // First go through program looking for function, record definitions to fill in signatures
     let mut function_signatures: HashMap<String, FunctionSignature> = HashMap::new();
+    let mut record_signatures: HashMap<String, RecordSignature> = HashMap::new();
 
     if let Sexp::List(vec) = s {
         for s1 in vec {
@@ -257,11 +297,28 @@ pub fn parse_prog(s: &Sexp) -> Prog {
                         {
                             panic!("Duplicate function definition: {}", signature.name);
                         }
+                    } else if name == "record" {
+                        println!("found a record definition");
+
+                        let record_signature = parse_record_signature(s1);
+                        if record_signatures
+                            .insert(record_signature.name.clone(), record_signature.clone())
+                            .is_some()
+                        {
+                            panic!("Duplicate record definition: {}", record_signature.name);
+                        }
                     }
                 }
             }
         }
     }
+
+    println!("{:?}", record_signatures);
+
+    let parse_ctx: ProgDefns = ProgDefns {
+        fn_signatures: function_signatures,
+        record_signatures: record_signatures,
+    };
 
     let mut functions: Vec<Function> = Vec::new();
 
@@ -277,12 +334,17 @@ pub fn parse_prog(s: &Sexp) -> Prog {
                                 arg_types: Vec::new(),
                                 return_type: ExprType::Main,
                             },
-                            body: Box::new(parse_expr(s1, &function_signatures)),
+                            body: Box::new(parse_expr(s1, &parse_ctx)),
                         });
+
+                        return (functions, parse_ctx);
                     }
                     Sexp::List(sub_vec) => match &sub_vec[0] {
                         Sexp::Atom(S(name)) if name == "fun" => {
-                            functions.push(parse_defn(s1, &function_signatures));
+                            functions.push(parse_defn(s1, &parse_ctx));
+                        }
+                        Sexp::Atom(S(name)) if name == "record" => {
+                            println!("found a record definition, 2nd part");
                         }
                         Sexp::Atom(_) => {
                             functions.push(Function {
@@ -291,8 +353,10 @@ pub fn parse_prog(s: &Sexp) -> Prog {
                                     arg_types: Vec::new(),
                                     return_type: ExprType::Main,
                                 },
-                                body: Box::new(parse_expr(s1, &function_signatures)),
+                                body: Box::new(parse_expr(s1, &parse_ctx)),
                             });
+
+                            return (functions, parse_ctx);
                         }
                         _ => panic!("Malformed program"),
                     },
@@ -301,5 +365,5 @@ pub fn parse_prog(s: &Sexp) -> Prog {
         }
     }
 
-    functions
+    (functions, parse_ctx)
 }

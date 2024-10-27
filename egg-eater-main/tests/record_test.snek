@@ -1,0 +1,7 @@
+(record bst_node ((val int) (left bst_node) (right bst_node)))
+
+(let (
+        (node (bst_node 5 (bst_node 1 NULL NULL) NULL))
+    )
+    (lookup (lookup node left) val)
+)
