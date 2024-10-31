@@ -13,9 +13,15 @@ pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, ctx: &ProgDefns) -> E
                 match sexp_list {
                     Sexp::List(vec) => match &vec[..] {
                         [Sexp::Atom(S(identifier)), e] => (identifier.clone(), parse_expr(e, ctx)),
-                        _ => panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)"),
+                        _ => {
+                            println!("{:?}", vec);
+                            panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)")
+                        },
                     },
-                    _ => panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)"),
+                    _ => {
+                        println!("{:?}", sexp_list);
+                        panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)")
+                    },
                 }
             })
             .collect();
@@ -28,6 +34,10 @@ pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, ctx: &ProgDefns) -> E
 
 pub fn parse_block_expr(e_vec_sexp: &[Sexp], ctx: &ProgDefns) -> Expr {
     let expression_vec: Vec<Expr> = e_vec_sexp.iter().map(|e| parse_expr(e, ctx)).collect();
+    
+    if expression_vec.len() == 0 {
+        panic!("Blocks must have at least one expression");
+    }
 
     Expr::Block(expression_vec)
 }
@@ -119,10 +129,26 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
             }
             _ => match &vec[0] {
                 Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], ctx),
+                Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
+                Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
                 Sexp::Atom(S(name)) => {
                     if let Some(func_signature) = ctx.fn_signatures.get(name) {
                         let mut args: Vec<Expr> = Vec::new();
 
+                        if vec.len() - 1 < func_signature.arg_types.len() {
+                            panic!(
+                                "Too few arguments when calling function: {}",
+                                name
+                            )
+                        }
+
+                        if vec.len() - 1 > func_signature.arg_types.len() {
+                            panic!(
+                                "Too many arguments when calling function: {}",
+                                name
+                            )
+                        }
+                        
                         for i in 0..func_signature.arg_types.len() {
                             args.push(parse_expr(&vec[i + 1], ctx));
                         }
@@ -131,12 +157,27 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                     } else if let Some(record_signature) = ctx.record_signatures.get(name) {
                         let mut args: Vec<Expr> = Vec::new();
 
+                        if vec.len() - 1 < record_signature.field_types.len() {
+                            panic!(
+                                "Too few arguments when initializing: {}",
+                                name
+                            )
+                        }
+
+                        if vec.len() - 1 > record_signature.field_types.len() {
+                            panic!(
+                                "Too many arguments when initializing: {}",
+                                name
+                            )
+                        }
+
                         for i in 0..record_signature.field_types.len() {
                             args.push(parse_expr(&vec[i + 1], ctx));
                         }
 
                         Expr::RecordInitializer(name.clone(), args)
                     } else {
+                        println!("{:?}", vec);
                         panic!(
                             "Invalid program: function call or record initialization to undefined: {}",
                             name
@@ -152,7 +193,10 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
 pub fn parse_type(s: &Sexp) -> ExprType {
     match s {
         Sexp::Atom(S(type_name)) => type_name.parse().unwrap(),
-        _ => panic!("Unexpected type"),
+        _ => {
+            println!("{}", s);
+            panic!("Unexpected type")
+        },
     }
 }
 

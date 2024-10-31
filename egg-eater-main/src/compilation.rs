@@ -65,27 +65,92 @@ fn compile_to_instrs(
 
             match op {
                 Op1::Print => {
-                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RSI),
-                        Val::Imm(e_type.to_type_flag()),
-                    ));
+                    if let ExprType::RecordPointer(name) = &e_type {
+                        let record_def = defns.record_signatures.get(name).expect("Record definition not found");
+                        // Let's first print the contents
+                        // if one of the contents is a pointer to another, we need to recursively call compile
 
-                    // Move rsp to most recent stack-allocated local variable
-                    instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
-                    instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
-                    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
 
-                    // Align rsp to 16 bytes
-                    instr_vec.push(ALIGN_RSP_16_BYTES);
+                        // print open parens
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RSI),
+                            Val::Imm(5),
+                        ));
 
-                    instr_vec.push(Instr::ICall("snek_print".to_string()));
+                        // Move rsp to most recent stack-allocated local variable
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+                        instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
 
-                    // Print statements should evaluate to the given value
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RBP, e_rbp_offset),
-                    ));
+                        // Align rsp to 16 bytes
+                        instr_vec.push(ALIGN_RSP_16_BYTES);
+
+                        instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+                        
+                        for (i, field_expr) in record_def.field_types.iter().enumerate() {        
+                            instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::R10, i32::try_from(i).unwrap() * SIZE_OF_NUMBER)));
+                            instr_vec.push(Instr::IMov(
+                                Val::Reg(Reg::RSI),
+                                Val::Imm(field_expr.1.to_type_flag()),
+                            ));
+
+                            // Move rsp to most recent stack-allocated local variable
+                            instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+                            instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
+                            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+
+                            // Align rsp to 16 bytes
+                            instr_vec.push(ALIGN_RSP_16_BYTES);
+
+                            instr_vec.push(Instr::ICall("snek_print".to_string()));
+                        }
+
+
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RSI),
+                            Val::Imm(6),
+                        ));
+
+                        // Move rsp to most recent stack-allocated local variable
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+                        instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+
+                        // Align rsp to 16 bytes
+                        instr_vec.push(ALIGN_RSP_16_BYTES);
+
+                        instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+                        // Print statements should evaluate to the given value
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RBP, e_rbp_offset),
+                        ));
+                    } else {
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RSI),
+                            Val::Imm(e_type.to_type_flag()),
+                        ));
+
+                        // Move rsp to most recent stack-allocated local variable
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+                        instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(*rbp_offset)));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+
+                        // Align rsp to 16 bytes
+                        instr_vec.push(ALIGN_RSP_16_BYTES);
+
+                        instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+                        // Print statements should evaluate to the given value
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RBP, e_rbp_offset),
+                        ));
+                    }
                 }
                 x => {
                     if e_type != ExprType::Number {
@@ -111,8 +176,12 @@ fn compile_to_instrs(
 
             let e1_type = compile_to_instrs(e1, scope, instr_vec, rbp_offset, tag_id, defns); // e1 is in rax
 
+            let is_comparing_record_to_null: bool = *op == Op2::Equal && 
+            (matches!(e1_type, ExprType::RecordPointer(_)) && e2_type == ExprType::RecordNullPtr || 
+            e1_type == ExprType::RecordNullPtr && matches!(e2_type, ExprType::RecordPointer(_)));
+
             // Perform some type checking on the arguments
-            if *op == Op2::Equal && e1_type != e2_type {
+            if !is_comparing_record_to_null && *op == Op2::Equal && e1_type != e2_type {
                 panic!("Type mismatch in equality comparison");
             } else if (*op != Op2::Equal)
                 && !(e1_type == ExprType::Number && e2_type == ExprType::Number)
@@ -126,14 +195,33 @@ fn compile_to_instrs(
             ) {
                 match op {
                     Op2::Equal => {
-                        instr_vec.push(Instr::ICmp(
-                            Val::Reg(Reg::RAX),
-                            Val::RegOffset(Reg::RBP, rbp_offset_e2_eval),
-                        ));
+                        if is_comparing_record_to_null {
+                            if matches!(e1_type, ExprType::RecordNullPtr) {
+                                // Compare record ptr with 0
+                                // rbp_offset_e2_val has e2 value, RAX has e1 value
+                                // e1 is null, so grab e2 and compare with 0
+                                instr_vec.push(Instr::ICmp(
+                                    Val::RegOffset(Reg::RBP, rbp_offset_e2_eval),
+                                    Val::Imm(0),
+                                ));
+                            } else {
+                                instr_vec.push(Instr::ICmp(
+                                    Val::Reg(Reg::RAX),
+                                    Val::Imm(0),
+                                ));
+                            }
+                        } else {
+                            instr_vec.push(Instr::ICmp(
+                                Val::Reg(Reg::RAX),
+                                Val::RegOffset(Reg::RBP, rbp_offset_e2_eval),
+                            ));
+                        }
 
+                            
                         instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(0)));
                         instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Imm(1)));
                         instr_vec.push(Instr::ICMovEqual(Val::Reg(Reg::RAX), Val::Reg(Reg::R10)));
+                        
                     }
                     Op2::Less => {
                         instr_vec.push(Instr::ICmp(
@@ -638,22 +726,80 @@ fn compile_function_to_instrs(
     // Call print function with final result if this is the main function
     if func.signature.name == MAIN_FN_TAG {
         instr_vec.push(Instr::IComment("Print final result".to_string()));
-        instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-        instr_vec.push(Instr::IMov(
-            Val::Reg(Reg::RSI),
-            Val::Imm(evaluated_return_type.to_type_flag()),
-        ));
+        if let ExprType::RecordPointer(name) = &evaluated_return_type {
+            let record_def = defns.record_signatures.get(name).expect("Record definition not found");
+            // Let's first print the contents
+            // if one of the contents is a pointer to another, we need to recursively call compile
 
-        // Ensure 16-byte stack alignment prior to calling snek_print
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
 
-        // Move rsp to most recent stack-allocated local variable
-        instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
-        instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));
-        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+            // print open parens
+            instr_vec.push(Instr::IMov(
+                Val::Reg(Reg::RSI),
+                Val::Imm(5),
+            ));
 
-        instr_vec.push(ALIGN_RSP_16_BYTES);
-        instr_vec.push(Instr::ICall("snek_print".to_string()));
+            // Move rsp to most recent stack-allocated local variable
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+            instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
 
+            // Align rsp to 16 bytes
+            instr_vec.push(ALIGN_RSP_16_BYTES);
+
+            instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+            
+            for (i, field_expr) in record_def.field_types.iter().enumerate() {        
+                instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::R10, i32::try_from(i).unwrap() * SIZE_OF_NUMBER)));
+                instr_vec.push(Instr::IMov(
+                    Val::Reg(Reg::RSI),
+                    Val::Imm(field_expr.1.to_type_flag()),
+                ));
+
+                // Move rsp to most recent stack-allocated local variable
+                instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+                instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));
+                instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+
+                // Align rsp to 16 bytes
+                instr_vec.push(ALIGN_RSP_16_BYTES);
+
+                instr_vec.push(Instr::ICall("snek_print".to_string()));
+            }
+
+
+            instr_vec.push(Instr::IMov(
+                Val::Reg(Reg::RSI),
+                Val::Imm(6),
+            ));
+
+            // Move rsp to most recent stack-allocated local variable
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+            instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+
+            // Align rsp to 16 bytes
+            instr_vec.push(ALIGN_RSP_16_BYTES);
+
+            instr_vec.push(Instr::ICall("snek_print".to_string()));
+        } else {
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+            instr_vec.push(Instr::IMov(
+                Val::Reg(Reg::RSI),
+                Val::Imm(evaluated_return_type.to_type_flag()),
+            ));
+    
+            // Ensure 16-byte stack alignment prior to calling snek_print
+    
+            // Move rsp to most recent stack-allocated local variable
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
+            instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(rbp_offset)));
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+    
+            instr_vec.push(ALIGN_RSP_16_BYTES);
+            instr_vec.push(Instr::ICall("snek_print".to_string()));
+        }
         // instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBX)));
     };
     instr_vec.push(Instr::IComment("Function epilogue".to_string()));

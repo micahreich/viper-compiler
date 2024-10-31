@@ -1,0 +1,53 @@
+(record bst_node ((val int) (left bst_node) (right bst_node)))
+
+(fun search_value ((val int) (root bst_node)) bool
+    (if (= root NULL) 
+    (false)
+    (let
+        ((curr_val (lookup root val)))
+        (if 
+            (= curr_val val)
+            (true)
+            (if (< val curr_val)
+                (search_value val (lookup root left))
+                (search_value val (lookup root right))
+            )
+            
+        )
+    )
+    )
+)
+
+(fun insert_value ((val int) (root bst_node)) bst_node
+    (if
+        (= root NULL)
+        (bst_node val NULL NULL)
+        (let
+            ((curr_val (lookup root val)))
+            (if 
+                (< val curr_val)
+                (bst_node (lookup root val) (insert_value val (lookup root left)) (lookup root right))
+                (bst_node (lookup root val) (lookup root left) (insert_value val (lookup root right)))
+            )
+        )
+    )
+    
+)
+
+(let
+    ((root (bst_node 5 (bst_node 3 (bst_node 2 NULL NULL) (bst_node 4 NULL NULL)) (bst_node 7 (bst_node 6 NULL NULL) (bst_node 8 NULL NULL)))))
+    (
+        block 
+        (print (search_value 10 root))
+        (let
+            ((new_root (insert_value 10 root)))
+            (block
+                (print (search_value 10 new_root)) 
+                (print (lookup (lookup (lookup new_root right) right) right))
+                (print (search_value 2 new_root)) 
+                (print (search_value 20 new_root))
+            )
+        )
+    )
+)
+

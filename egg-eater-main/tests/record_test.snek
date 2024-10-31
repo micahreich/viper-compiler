@@ -3,5 +3,5 @@
 (let (
         (node (bst_node 5 (bst_node 1 NULL NULL) NULL))
     )
-    (lookup (lookup node left) val)
+    (print node)
 )
