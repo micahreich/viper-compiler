@@ -17,6 +17,12 @@ Cargo.lock
 
 *.run
 
+hw2/
+hw3-2/
+hw6/
+random/
+hw8/
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

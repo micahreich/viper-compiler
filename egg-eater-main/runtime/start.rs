@@ -37,10 +37,6 @@ pub extern "C" fn snek_print(value: i64, type_kind: u64) {
     match type_kind {
         1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
         0 => println!("{value}"), // integer
-        2 => println!("{{pointer}}"),
-        4 => println!("NULL"),
-        5 => println!("("),
-        6 => println!(")"),
         _ => snek_error(2),
     };
 }
