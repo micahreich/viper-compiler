@@ -8,7 +8,7 @@ pub struct CompileCtx {
     pub rbp_offset: i32,
     pub tag_id: i32,
     /// The `carry_fwd_assignment` flag is used to determine whether or not to increment the reference count of a record pointer
-    /// depending on if the expression which is currently being evluated is going to be assigned to a variable or not
+    /// depending on if the expression which is currently being evaluated is going to be assigned to a variable or not
     pub carry_fwd_assignment: bool,
 }
 
@@ -253,9 +253,9 @@ fn compile_to_instrs(
 
             let e1_type = compile_to_instrs(e1, ctx, instr_vec, defns); // e1 is in rax
 
-            let is_comparing_record_to_null = (*op == Op2::Equal) && 
-                (matches!(e1_type, ExprType::RecordPointer(_)) && e2_type == ExprType::RecordNullPtr || 
-                e1_type == ExprType::RecordNullPtr && matches!(e2_type, ExprType::RecordPointer(_)));
+            // let is_comparing_record_to_null = (*op == Op2::Equal) && 
+            //     (matches!(e1_type, ExprType::RecordPointer(_)) && e2_type == ExprType::RecordNullPtr || 
+            //     e1_type == ExprType::RecordNullPtr && matches!(e2_type, ExprType::RecordPointer(_)));
 
             match op {
                 Op2::Equal => {
@@ -958,7 +958,7 @@ fn compile_function_to_instrs(
 
 fn compile_record_rc_decr_function_to_instrs(instr_vec: &mut Vec<Instr>, record_name: &String, defns: &ProgDefns) {
     // Generates assembly to decrement the reference count of a record by 1, freeing the record if the refcount is 0
-    // handles the case where the record is a pointer to another record
+    // handles the case where the record has a pointer to another record(s)
 
     // The memory layout for smart-pointers looks something like:
     // x (stack-allocated variable) •----(pointer)----> [refcount, record_ptr] (this is what we call the smart pointer)
@@ -988,13 +988,30 @@ fn compile_record_rc_decr_function_to_instrs(instr_vec: &mut Vec<Instr>, record_
             // and free the memory if the refcount is 0 recursively
             instr_vec.extend(vec![
                 // Load the address of the record struct into R11
-                Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RDI, 1 * SIZE_OF_DWORD)),
+                Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, smartptr_addr_rbp_offset)),
+                Instr::IMov(Val::Reg(Reg::R10), Val::RegOffset(Reg::R11, 1 * SIZE_OF_DWORD)),
                 // Load the address of the field's smart pointer into RDI
-                Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::R11, i32::try_from(i).unwrap() * SIZE_OF_DWORD)),
+                Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::R10, i32::try_from(i).unwrap() * SIZE_OF_DWORD)),
                 Instr::ICall(format!("{}_record_rc_decr", field_record_type))
             ]);
         }
     }
+    
+    //              a    z
+    // x ----> 1 -> 2 -> 3 -> 4 -> 5
+
+    /*
+    fn refcount_decr(mem_addr_smart_ptr):
+        if --mem_addr_smart_ptr[ref_cnt] > 0:
+            return
+        
+        for each pointer field in record:
+            refcount_decr(mem_addr_smart_ptr[field])
+        
+        free(mem_addr_smart_ptr[record_ptr])
+        free(mem_addr_smart_ptr)
+
+    */
 
     // Check if the refcount is 0 after decrementing/freeing/checking all the fields
     instr_vec.push(Instr::IComment(format!("Check if the record needs to be freed").to_string()));
