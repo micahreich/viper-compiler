@@ -44,18 +44,25 @@ pub enum Instr {
     IPush(Val),
     IPop(Val),
     IRet,
+    IEnter(i32),
+    ILeave,
 }
 
-pub const FUNCTION_PROLOGUE: [Instr; 2] = [
-    Instr::IPush(Val::Reg(Reg::RBP)), // push old rbp to stack
-    Instr::IMov(Val::Reg(Reg::RBP), Val::Reg(Reg::RSP)), // set rbp equal to the current rsp
-                                      // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
-];
+// pub const FUNCTION_PROLOGUE: [Instr; 2] = [
+//     Instr::IPush(Val::Reg(Reg::RBP)), // push old rbp to stack
+//     Instr::IMov(Val::Reg(Reg::RBP), Val::Reg(Reg::RSP)), // set rbp equal to the current rsp
+//                                       // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
+// ];
 
-pub const FUNCTION_EPILOGUE: [Instr; 3] = [
-    // Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, -SIZE_OF_NUMBER)), // restore rbx
-    Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBP)),
-    Instr::IPop(Val::Reg(Reg::RBP)),
+// pub const FUNCTION_EPILOGUE: [Instr; 3] = [
+//     // Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, -SIZE_OF_NUMBER)), // restore rbx
+//     Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBP)),
+//     Instr::IPop(Val::Reg(Reg::RBP)),
+//     Instr::IRet,
+// ];
+
+pub const FUNCTION_EPILOGUE: [Instr; 2] = [
+    Instr::ILeave,
     Instr::IRet,
 ];
 
@@ -143,7 +150,7 @@ pub struct Function {
 pub type Prog = Vec<Function>;
 
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
-pub const SIZE_OF_NUMBER: i32 = 8;
+pub const SIZE_OF_DWORD: i32 = 8;
 
 pub const RESERVED_KEYWORDS: [&str; 17] = [
     "let",
@@ -176,8 +183,4 @@ pub fn is_valid_identifier(s: &str) -> bool {
     }
 
     true
-}
-
-pub fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
-    (n + 15) & !15
 }

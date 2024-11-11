@@ -37,7 +37,7 @@ pub extern "C" fn snek_print(value: i64, type_kind: u64) {
     match type_kind {
         1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
         0 => println!("{value}"), // integer
-        _ => snek_error(2),
+        _ => {println!("{}", type_kind); snek_error(2)}
     };
 }
 
