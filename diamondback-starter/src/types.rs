@@ -48,26 +48,7 @@ pub enum Instr {
     ILeave,
 }
 
-// pub const FUNCTION_PROLOGUE: [Instr; 2] = [
-//     Instr::IPush(Val::Reg(Reg::RBP)), // push old rbp to stack
-//     Instr::IMov(Val::Reg(Reg::RBP), Val::Reg(Reg::RSP)), // set rbp equal to the current rsp
-//                                       // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
-// ];
-
-// pub const FUNCTION_EPILOGUE: [Instr; 3] = [
-//     // Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, -SIZE_OF_NUMBER)), // restore rbx
-//     Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::RBP)),
-//     Instr::IPop(Val::Reg(Reg::RBP)),
-//     Instr::IRet,
-// ];
-
-pub const FUNCTION_EPILOGUE: [Instr; 2] = [
-    Instr::ILeave,
-    Instr::IRet,
-];
-
-pub const ALIGN_RSP_16_BYTES: Instr =
-    Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(0xFFFFFFF0u32 as i32));
+pub const FUNCTION_EPILOGUE: [Instr; 2] = [Instr::ILeave, Instr::IRet];
 
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 
