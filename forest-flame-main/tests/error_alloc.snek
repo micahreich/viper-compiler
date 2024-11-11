@@ -1,0 +1,11 @@
+(record Vec2 ((x int) (y int)))
+
+(fun add_vec ((a Vec2) (b Vec2)) Vec2
+    (Vec2 (+ (lookup a x) (lookup b x)) (+ (lookup  a y) (lookup b y)))
+)
+
+(
+    let
+    ((a (Vec2 1 1 1 1)) (b (Vec2 2 2)))
+    (add_vec a b)
+)
