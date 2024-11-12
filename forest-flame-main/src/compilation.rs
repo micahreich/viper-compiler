@@ -1,5 +1,5 @@
 use core::panic;
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt::format};
 
 use crate::types::*;
 
@@ -51,7 +51,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
                 space_needed += stack_space_needed(binding_e);
             }
 
-            space_needed + stack_space_needed(e) // Also considering stack space needed for let body expression
+            space_needed + stack_space_needed(e) + 1 * SIZE_OF_DWORD // Also considering stack space needed for let body expression
         }
         Expr::Set(_, e) => stack_space_needed(e),
         Expr::Block(expr_vec) => {
@@ -124,7 +124,12 @@ fn compile_to_instrs(
 
                 // Check carry forward assignment for refcnt pointers, increment refcnt by 1
                 if ctx.carry_fwd_assignment && matches!(e_type, ExprType::RecordPointer(_)) {
+                    instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
+                    ctx.tag_id += 1;
+                    let null_end_tag = format!("null_check{}", ctx.tag_id);
+                    instr_vec.push(Instr::IJumpEqual(null_end_tag.clone()));
                     instr_vec.push(Instr::IAdd(Val::RegOffset(Reg::RAX, 0), Val::Imm(1)));
+                    instr_vec.push(Instr::ITag(null_end_tag));
                 }
 
                 e_type.clone()
@@ -371,6 +376,7 @@ fn compile_to_instrs(
 
                 // Set the carry forward assignment flag to true for the bindings since we're doing assignments
                 let var_e_type = compile_to_instrs(var_e, ctx, instr_vec, defns);
+                ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
 
                 if newly_created_variable_scope
                     .insert(var.clone(), (ctx.rbp_offset, var_e_type.clone()))
@@ -385,6 +391,7 @@ fn compile_to_instrs(
 
             // Compile the expression
             let e_type = compile_to_instrs(e, ctx, instr_vec, defns);
+            ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             
             // Check for any pointer types in the bindings and decrement the references
             for (var, (offset, e_type)) in newly_created_variable_scope.iter() {
@@ -393,6 +400,8 @@ fn compile_to_instrs(
                     instr_vec.push(Instr::ICall(format!("{}_record_rc_decr", record_name)));
                 }
             }
+
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RBP, ctx.rbp_offset)));
 
             // Restore original scope after the let expression is finished
             ctx.scope = original_scope;
@@ -503,6 +512,8 @@ fn compile_to_instrs(
             return_type_loop_body
         }
         Expr::Call(func_sig, args) => {
+            let old_carry_fwd = ctx.carry_fwd_assignment;
+            ctx.carry_fwd_assignment = true;
             for (i, arg_expr) in args.iter().enumerate() {
                 let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, defns);
 
@@ -518,13 +529,17 @@ fn compile_to_instrs(
                     Val::Reg(Reg::RAX),
                 ));
             }
+            ctx.carry_fwd_assignment = old_carry_fwd;
 
             // Call the function
             instr_vec.push(Instr::ICall(func_sig.name.clone()));
             func_sig.return_type.clone()
         }
         Expr::Lookup(e1, field) => {
+            let old_carry_fwd = ctx.carry_fwd_assignment;
+            ctx.carry_fwd_assignment = false;
             let e1_type = compile_to_instrs(e1, ctx, instr_vec, defns);
+            ctx.carry_fwd_assignment = old_carry_fwd;
 
             if let ExprType::RecordPointer(record_name) = e1_type {
                 let record_signature = defns.record_signatures.get(&record_name).unwrap();
@@ -550,7 +565,12 @@ fn compile_to_instrs(
                     let return_type = record_signature.field_types[idx].1.clone();
                     if ctx.carry_fwd_assignment && matches!(return_type, ExprType::RecordPointer(_)) {
                         // Increment the reference count of the field
+                        instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
+                        ctx.tag_id += 1;
+                        let null_end_tag = format!("null_check{}", ctx.tag_id);
+                        instr_vec.push(Instr::IJumpEqual(null_end_tag.clone()));
                         instr_vec.push(Instr::IAdd(Val::RegOffset(Reg::RAX, 0), Val::Imm(1)));
+                        instr_vec.push(Instr::ITag(null_end_tag));
                     }
 
                     return_type
@@ -736,9 +756,9 @@ fn compile_function_to_instrs(
     // Set up the function prologue for our_code_starts_here
     let stack_space_needed_n_bytes = stack_space_needed(&func.body)
         + if func.signature.name == MAIN_FN_TAG {
-            SIZE_OF_DWORD
+            2 * SIZE_OF_DWORD
         } else {
-            0
+            1 * SIZE_OF_DWORD
         };
 
     instr_vec.push(Instr::IEnter(round_up_to_next_multiple_of_16(
@@ -788,6 +808,22 @@ fn compile_function_to_instrs(
 
         instr_vec.push(Instr::ICall("snek_print".to_string()));
     };
+
+    let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+
+    for (i, arg) in func.signature.arg_types.iter().enumerate() {
+       if let ExprType::RecordPointer(record_name) = &arg.1 {
+        // Decrement ref counter
+        let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
+        instr_vec.extend(vec![
+            Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, arg_rbp_offset)),
+            Instr::ICall(format!("{}_record_rc_decr", record_name)),
+        ]);
+        
+       }
+    }
+
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RBP, rax_offset)));
 
     instr_vec.extend(FUNCTION_EPILOGUE);
     func.signature.return_type.clone()

@@ -1,8 +1,15 @@
 (record node ((val int) (next node)))
 
-(let
-    ((head (node 0 NULL)))
-    (block
-        (true)
+(fun random ((head node)) bool
+    (if
+        (= (lookup head val) 0)
+        (false)
+        (true) 
     )
+)
+
+
+(let
+    ((head (node 0 (node 1 NULL))))
+    (random head)
 )
