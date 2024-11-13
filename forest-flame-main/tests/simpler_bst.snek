@@ -1,0 +1,13 @@
+(record node ((val int) (next node)))
+
+(fun my_function ((head node)) node
+    (node 10 NULL)
+)
+
+(let
+    ((root (node 5 NULL)))
+    (let
+        ((new_root (my_function root)))
+        (= new_root root)
+    )
+)

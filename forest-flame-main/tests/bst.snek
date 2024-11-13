@@ -20,7 +20,6 @@
     ((root (bst_node 5 NULL (bst_node 6 NULL (bst_node 7 NULL NULL)))))
     (let
             ((new_root (insert_value 10 root)))
-            (print (lookup (lookup (lookup new_root right) right) right))
+            (lookup (lookup (lookup (lookup new_root right) right) right) val)
     )
 )
-

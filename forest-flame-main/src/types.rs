@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use im::HashMap;
 use regex::Regex;
+use std::fmt;
 
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 
@@ -27,6 +28,7 @@ pub enum Reg {
     R10,
     R11,
     R12,
+    RBX,
 }
 
 #[derive(Debug)]
@@ -198,10 +200,6 @@ pub fn is_valid_identifier(s: &str) -> bool {
     }
 
     true
-}
-
-pub fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
-    (n + 15) & !15
 }
 
 pub struct ProgDefns {

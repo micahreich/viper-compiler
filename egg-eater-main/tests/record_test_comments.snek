@@ -1,0 +1,19 @@
+(record bst_node ((val int) (left my_record) (right my_record)))
+
+(let (
+        (node (bst_node 5 NULL NULL))
+    )
+    (block
+        (set-field node val 5)
+        (set-field node left)
+    )
+)
+
+// assuming new_val is not in the BST already
+fun bst_insert(bst_root, new_val):
+    root_val = lookup(bst_root, val)
+
+    if new_val > root_val then
+        bst_node(root_val, left, insert(lookup(bst_root, right)))
+    else
+        bst_node(root_val, insert(lookup(bst_root, left)), right)
