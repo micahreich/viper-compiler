@@ -594,6 +594,8 @@ fn compile_to_instrs(
                 Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, rbx_offset)),
             ]);
 
+            let rbp_starting_offset_from_condition = ctx.rbp_offset;
+
             // If e1 evaluates to false, go to e3 (false branch)
             instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
             instr_vec.push(Instr::IJumpEqual(format!("else{curr_tag_id}")));
@@ -603,6 +605,7 @@ fn compile_to_instrs(
             instr_vec.push(Instr::IJump(format!("end{curr_tag_id}")));
 
             // Compile e3 (false branch)
+            ctx.rbp_offset = rbp_starting_offset_from_condition;
             instr_vec.push(Instr::ITag(format!("else{curr_tag_id}")));
             let return_type_false_branch = compile_to_instrs(e3, ctx, instr_vec, defns);
 
