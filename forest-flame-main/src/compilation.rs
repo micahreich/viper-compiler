@@ -24,7 +24,26 @@ fn push_reg_to_stack(instr_vec: &mut Vec<Instr>, rbp_offset: i32, reg: Reg) -> i
     new_rbp_offset
 }
 
+fn push_val_to_stack(instr_vec: &mut Vec<Instr>, rbp_offset: i32, val: i32) -> i32 {
+    let new_rbp_offset = rbp_offset - SIZE_OF_DWORD;
+
+    instr_vec.push(Instr::IMov(
+        Val::RegOffset(Reg::RBP, new_rbp_offset),
+        Val::Imm(val),
+    ));
+
+    new_rbp_offset
+}
+
+fn calculate_record_size(signature: &RecordSignature) -> i32 {
+    return i32::try_from(
+        (signature.field_types.len() + 1) * SIZE_OF_DWORD as usize,
+    )
+    .expect("Record size (+1) in bytes exceeds i32 max value");
+}
+
 fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
+    println!("Rounding up: {} to {}", n, (n + 15) & !15);
     (n + 15) & !15
 }
 
@@ -35,7 +54,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
             match op1 {
                 Op1::Print => {
                     stack_space_needed(e) + // Evaluate the expression to be printed
-                    1 * SIZE_OF_DWORD // Save RAX on the stack to restore after print call
+                    2 * SIZE_OF_DWORD // Save RAX on the stack to restore after print call
                 }
                 _ => stack_space_needed(e),
             }
@@ -159,81 +178,75 @@ fn compile_to_instrs(
             }
         },
         Expr::UnOp(op, e) => {
+            instr_vec.push(Instr::IComment("Save RBX before field lookup".to_string()));
+
+            let rbx_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RBX);
+            ctx.rbp_offset = rbx_offset;
+
+            instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(1)));
+
             let e_type: ExprType = compile_to_instrs(e, ctx, instr_vec, defns);
+
+            // Restore RBX
+            instr_vec.extend(vec![
+                Instr::IComment("Restore RBX after field lookup".to_string()),
+                Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, rbx_offset)),
+            ]);
 
             match op {
                 Op1::Print => {
                     if let ExprType::RecordPointer(name) = &e_type {
-                        todo!();
-                        // let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                        // ctx.rbp_offset = e_rbp_offset;
+                        
+                        // todo!();
+                        let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                        ctx.rbp_offset = e_rbp_offset;
 
-                        // let record_def = defns.record_signatures.get(name).expect("Record definition not found");
-                        // // // Let's first print the contents
-                        // // // if one of the contents is a pointer to another, we need to recursively call compile
+                        let record_def = defns.record_signatures.get(name).expect("Record definition not found");
+                        // // Let's first print the contents
+                        // // if one of the contents is a pointer to another, we need to recursively call compile
 
-                        // instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
 
-                        // // // print open parens
-                        // instr_vec.push(Instr::IMov(
-                        //     Val::Reg(Reg::RDI),
-                        //     Val::Imm(0),
-                        // ));
-                        // instr_vec.push(Instr::IMov(
-                        //     Val::Reg(Reg::RSI),
-                        //     Val::Imm(5),
-                        // ));
+                        // // print open parens
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RDI),
+                            Val::Imm(0),
+                        ));
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RSI),
+                            Val::Imm(5),
+                        ));
 
-                        // // Move rsp to most recent stack-allocated local variable
-                        // instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
-                        // instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(ctx.rbp_offset)));
-                        // instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
+                        instr_vec.push(Instr::ICall("snek_print".to_string()));
 
-                        // // Align rsp to 16 bytes
-                        // instr_vec.push(ALIGN_RSP_16_BYTES);
+                        for (i, field_expr) in record_def.field_types.iter().enumerate() {
+                            instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::R10, i32::try_from(i+1).unwrap() * SIZE_OF_DWORD)));
+                            instr_vec.push(Instr::IMov(
+                                Val::Reg(Reg::RSI),
+                                Val::Imm(field_expr.1.to_type_flag()),
+                            ));
 
-                        // instr_vec.push(Instr::ICall("snek_print".to_string()));
+                            instr_vec.push(Instr::ICall("snek_print".to_string()));
+                        }
 
-                        // for (i, field_expr) in record_def.field_types.iter().enumerate() {
-                        //     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::R10, i32::try_from(i+1).unwrap() * SIZE_OF_DWORD)));
-                        //     instr_vec.push(Instr::IMov(
-                        //         Val::Reg(Reg::RSI),
-                        //         Val::Imm(field_expr.1.to_type_flag()),
-                        //     ));
+                        // // print closed parens
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RDI),
+                            Val::Imm(1),
+                        ));
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RSI),
+                            Val::Imm(5),
+                        ));
 
-                        //     instr_vec.push(Instr::ICall("snek_print".to_string()));
-                        // }
 
-                        // // // print closed parens
-                        // instr_vec.push(Instr::IMov(
-                        //     Val::Reg(Reg::RDI),
-                        //     Val::Imm(1),
-                        // ));
-                        // instr_vec.push(Instr::IMov(
-                        //     Val::Reg(Reg::RSI),
-                        //     Val::Imm(5),
-                        // ));
+                        instr_vec.push(Instr::ICall("snek_print".to_string()));
 
-                        // instr_vec.push(Instr::IMov(
-                        //     Val::Reg(Reg::RSI),
-                        //     Val::Imm(6),
-                        // ));
-
-                        // // Move rsp to most recent stack-allocated local variable
-                        // instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::Reg(Reg::RBP)));
-                        // instr_vec.push(Instr::IAdd(Val::Reg(Reg::R11), Val::Imm(ctx.rbp_offset)));
-                        // instr_vec.push(Instr::IMov(Val::Reg(Reg::RSP), Val::Reg(Reg::R11)));
-
-                        // // Align rsp to 16 bytes
-                        // instr_vec.push(ALIGN_RSP_16_BYTES);
-
-                        // instr_vec.push(Instr::ICall("snek_print".to_string()));
-
-                        // // // Print statements should evaluate to the given value
-                        // instr_vec.push(Instr::IMov(
-                        //     Val::Reg(Reg::RAX),
-                        //     Val::RegOffset(Reg::RBP, e_rbp_offset),
-                        // ));
+                        // // Print statements should evaluate to the given value
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RBP, e_rbp_offset),
+                        ));
                     } else {
                         let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
                         ctx.rbp_offset = e_rbp_offset;
@@ -387,7 +400,7 @@ fn compile_to_instrs(
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(1)));
 
             for (var, var_e) in bindings {
-                if var == "input" || !is_valid_identifier(var) {
+                if var == "input" || var == "heap_size" || !is_valid_identifier(var) {
                     panic!("Reserved keyword or invalid identifier used as variable name in let expression");
                 }
 
@@ -804,15 +817,35 @@ fn compile_to_instrs(
             // Call malloc
             if let Some(record_signature) = defns.record_signatures.get(record_name) {
                 // Now allocate space for the record itself
-                let n_bytes = i32::try_from(
-                    (record_signature.field_types.len() + 1) * SIZE_OF_DWORD as usize,
-                )
-                .expect("Record size (+1) in bytes exceeds i32 max value");
+                let n_bytes: i32 = calculate_record_size(record_signature);
+
+                ctx.tag_id += 1;
+                let heap_check_end_tag = format!("heap_check_end{}", ctx.tag_id);
+
+                // let rbp_offset_record_ptr_eval =
+                //     push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                // ctx.rbp_offset = rbp_offset_record_ptr_eval;
+
+                // Check if out of memory
+                instr_vec.extend(vec![
+                    Instr::IAdd(Val::RegOffset(Reg::R12, CURRENT_HEAP_SIZE_R12_OFFSET), Val::Imm(n_bytes)),
+                    Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::R12, CURRENT_HEAP_SIZE_R12_OFFSET)),
+                    // Instr::IMov(Val::Reg(Reg::R13), Val::RegOffset(Reg::R12, MAX_HEAP_SIZE_R12_OFFSET)),
+                    // Check if curr_heap_size < max_heap_size
+                    // Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::R13)),
+                    // Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(0)),
+                    // Instr::ICall("snek_print".to_string()),
+                    Instr::ICmp(Val::Reg(Reg::R11), Val::RegOffset(Reg::R12, MAX_HEAP_SIZE_R12_OFFSET)),
+                    Instr::IJumpLess(heap_check_end_tag.to_string()),
+                    Instr::ICall("out_of_memory_error".to_string()),
+                    Instr::ITag(heap_check_end_tag)
+                ]);
+
                 instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(n_bytes)));
 
                 instr_vec.push(Instr::ICall("malloc".to_string()));
                 instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
-                instr_vec.push(Instr::IJumpEqual("null_pointer_error".to_string()));
+                instr_vec.push(Instr::IJumpEqual("out_of_memory_error".to_string()));
 
                 // Move rax into temporary stack place
                 let rbp_offset_record_ptr_eval =
@@ -901,6 +934,7 @@ fn instr_to_str(i: &Instr) -> String {
         Instr::IJump(tag) => format!("jmp {tag}"),
         Instr::IJumpEqual(tag) => format!("je {tag}"),
         Instr::IJumpNotEqual(tag) => format!("jne {tag}"),
+        Instr::IJumpLess(tag) => format!("jl {tag}"),
         Instr::ICmp(v1, v2) => {
             let size_specifier = if let Val::Imm(_) = v2 { "qword " } else { "" };
             format!("cmp {size_specifier}{}, {}", val_to_str(v1), val_to_str(v2))
@@ -921,6 +955,7 @@ fn instr_to_str(i: &Instr) -> String {
         Instr::IComment(s) => format!("; {}", s),
         Instr::IEnter(n) => format!("enter {}, 0", n),
         Instr::ILeave => "leave".to_string(),
+        Instr::ISyscall => "int 0x80".to_string(),
     }
 }
 
@@ -931,10 +966,12 @@ fn reg_to_str(r: &Reg) -> String {
         Reg::RDI => "rdi".to_string(),
         Reg::RSI => "rsi".to_string(),
         Reg::R10 => "r10".to_string(),
+        Reg::R13 => "r13".to_string(),
         Reg::RBP => "rbp".to_string(),
         Reg::R11 => "r11".to_string(),
         Reg::R12 => "r12".to_string(),
         Reg::RBX => "rbx".to_string(),
+        Reg::RLIMIT_STRUCT => "rlimit_struct".to_string(),
     }
 }
 
@@ -963,13 +1000,13 @@ fn compile_function_to_instrs(
     let stack_space_needed_n_bytes = stack_space_needed(&func.body) +
         1 * SIZE_OF_DWORD +
         if func.signature.name == MAIN_FN_TAG {
-            2 * SIZE_OF_DWORD
+            4 * SIZE_OF_DWORD
         } else { 0 };
     
     ctx.rbp_offset = 0;
 
     instr_vec.push(Instr::IEnter(round_up_to_next_multiple_of_16(
-        2 * stack_space_needed_n_bytes,
+        1 * stack_space_needed_n_bytes,
     )));
 
     let scope = &mut VariableScope::new();
@@ -986,10 +1023,38 @@ fn compile_function_to_instrs(
         scope.insert(arg.0.clone(), (arg_rbp_offset, arg.1.clone()));
     }
 
+    let mut r12_rbp_offset = 0;
+
     // Add `input` as a local variable if the function being parsed is main
     if func.signature.name == MAIN_FN_TAG {
+        // Store R12 so we can restore it later
+        r12_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::R12);
+        ctx.rbp_offset = r12_rbp_offset;
+
+        // Store current RBP to R12
+        instr_vec.push(Instr::IMov(Val::Reg(Reg::R12), Val::Reg(Reg::RBP)));
+
+        // Push heap size to stack (can index with [rbp - 16])
+        ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RSI);
+        scope.insert("heap_size".to_string(), (ctx.rbp_offset, ExprType::Number));
+
+        // Push current heap size (0) to stack (can index with [rbp - 24])
+        ctx.rbp_offset = push_val_to_stack(instr_vec, ctx.rbp_offset, 0);
+
+        // input: input to the program
         ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RDI);
         scope.insert("input".to_string(), (ctx.rbp_offset, ExprType::Number));
+        // heap_size: max heap size
+        
+
+        // instr_vec.extend(vec![
+        //     Instr::IMov(Val::RegOffset(Reg::RLIMIT_STRUCT, 0), Val::Reg(Reg::RSI)),
+        //     Instr::IMov(Val::RegOffset(Reg::RLIMIT_STRUCT, 8), Val::Reg(Reg::RSI)),
+        //     Instr::IMov(Val::Reg(Reg::RAX), Val::Imm(160)),
+        //     Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(9)),
+        //     Instr::IMov(Val::Reg(Reg::RSI), Val::RegOffset(Reg::RLIMIT_STRUCT, 0)),
+        //     Instr::ISyscall
+        // ]);
     }
 
     ctx.scope = scope.clone();
@@ -1021,6 +1086,9 @@ fn compile_function_to_instrs(
             Instr::IComment("Restore RBX after main fn body".to_string()),
             Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, rbx_offset)),
         ]);
+
+        // Need to restore r12
+        instr_vec.push(Instr::IMov(Val::Reg(Reg::R12), Val::RegOffset(Reg::RBP, r12_rbp_offset)));
 
         ret
     } else {
@@ -1139,6 +1207,11 @@ fn compile_record_rc_decr_function_to_instrs(
         ),
         Instr::ICall("free".to_string()), // Free the record struct
     ]);
+
+    let n_bytes: i32 = calculate_record_size(signature);
+
+    // Subtract from curr heap size
+    instr_vec.push(Instr::ISub(Val::RegOffset(Reg::R12, CURRENT_HEAP_SIZE_R12_OFFSET), Val::Imm(n_bytes)));
 
     instr_vec.push(Instr::ITag(format!(
         "{}_record_rc_decr_end",
@@ -1274,7 +1347,7 @@ extern free
 section .text
 global our_code_starts_here
 
-null_pointer_error:
+out_of_memory_error:
   mov rdi, 4
   call snek_error
 
@@ -1295,6 +1368,7 @@ rc_incr:
   rc_incr_end:
   leave
   ret
+
 "
     .to_string();
 

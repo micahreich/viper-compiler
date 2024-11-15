@@ -11,5 +11,9 @@
 
 (let
     ((head (node 0 (node 1 NULL))))
-    (random head)
+    (block
+        (print (random head))
+        (print (true))
+        (print (false))
+    )
 )

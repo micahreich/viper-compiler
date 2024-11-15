@@ -10,6 +10,10 @@ pub type Prog = Vec<Function>;
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
 pub const SIZE_OF_DWORD: i32 = 8;
 
+pub const MAX_HEAP_SIZE_R12_OFFSET: i32 = -16;
+pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -24;
+
+
 #[derive(Debug)]
 pub enum Val {
     Reg(Reg),
@@ -28,7 +32,9 @@ pub enum Reg {
     R10,
     R11,
     R12,
+    R13,
     RBX,
+    RLIMIT_STRUCT
 }
 
 #[derive(Debug)]
@@ -42,6 +48,7 @@ pub enum Instr {
     IJump(String),
     IJumpEqual(String),
     IJumpNotEqual(String),
+    IJumpLess(String),
     ICmp(Val, Val),
     ICMovEqual(Val, Val),
     ICMovLess(Val, Val),
@@ -56,6 +63,7 @@ pub enum Instr {
     IComment(String),
     IEnter(i32),
     ILeave,
+    ISyscall
 }
 
 // pub const FUNCTION_PROLOGUE: [Instr; 2] = [
