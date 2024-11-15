@@ -42,6 +42,7 @@
     ((root (bst_node 10 NULL NULL)) (search_res (search_value input root)))
     (
         block 
+        (print search_res)
         (let
             ((new_root (insert_value input root)))
             (search_value input new_root)
