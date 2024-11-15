@@ -451,7 +451,7 @@ fn compile_to_instrs(
                 .expect("Variable not found in scope during set expression")
                 .clone();
 
-            if let ExprType::RecordPointer(_) = id_type {
+            if let ExprType::RecordPointer(record_name) = id_type.clone() {
                 // Track the old carry forward assignment value, temporarily set to 1 for set bindings
                 instr_vec.push(Instr::IComment(
                     "Save RBX before set! expression".to_string(),
@@ -482,7 +482,7 @@ fn compile_to_instrs(
                 // Decrement the refcount of what `id` was originally pointing to
                 instr_vec.extend(vec![
                     Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, id_offset)),
-                    Instr::ICall("rc_decr".to_string()),
+                    Instr::ICall(format!("{}_record_rc_decr", record_name)),
                 ]);
 
                 // Move the evaluated value of e1 into the place on the stack where `id` is stored
@@ -655,6 +655,8 @@ fn compile_to_instrs(
 
             instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(1)));
 
+            let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
+
             for (i, arg_expr) in args.iter().enumerate() {
                 let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, defns);
 
@@ -665,11 +667,12 @@ fn compile_to_instrs(
                 // [arg 2] 0x10
                 // [arg 1] 0x08 <- $rsp
 
-                instr_vec.push(Instr::IMov(
-                    Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
-                    Val::Reg(Reg::RAX),
-                ));
+                let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                ctx.rbp_offset = arg_i_rbp_offset;
+
+                arg_evaluation_offsets.push(arg_i_rbp_offset);
             }
+
             // ctx.carry_fwd_assignment = old_carry_fwd;
 
             // Restore RBX
@@ -677,6 +680,19 @@ fn compile_to_instrs(
                 Instr::IComment("Restore RBX after fn argument evaluations".to_string()),
                 Instr::IMov(Val::Reg(Reg::RBX), Val::RegOffset(Reg::RBP, rbx_offset)),
             ]);
+
+            for (i, offset) in arg_evaluation_offsets.iter().enumerate() {
+                instr_vec.extend(vec![
+                    // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
+                    Instr::IMov(
+                        Val::Reg(Reg::R11),
+                        Val::RegOffset(Reg::RBP, *offset)),
+                    Instr::IMov(
+                        Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
+                        Val::Reg(Reg::R11),
+                    )
+                ]);
+            }
 
             // Call the function
             instr_vec.push(Instr::ICall(func_sig.name.clone()));
