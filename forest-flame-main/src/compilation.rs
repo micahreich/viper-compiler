@@ -104,7 +104,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
 
             for e in args {
                 space_needed += stack_space_needed(e);
-                space_needed += SIZE_OF_DWORD;
+                space_needed += 2 * SIZE_OF_DWORD;
             }
             space_needed + SIZE_OF_DWORD
         }
@@ -846,11 +846,6 @@ fn compile_to_instrs(
                 instr_vec.extend(vec![
                     Instr::IAdd(Val::RegOffset(Reg::R12, CURRENT_HEAP_SIZE_R12_OFFSET), Val::Imm(n_bytes)),
                     Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::R12, CURRENT_HEAP_SIZE_R12_OFFSET)),
-                    // Instr::IMov(Val::Reg(Reg::R13), Val::RegOffset(Reg::R12, MAX_HEAP_SIZE_R12_OFFSET)),
-                    // Check if curr_heap_size < max_heap_size
-                    // Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::R13)),
-                    // Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(0)),
-                    // Instr::ICall("snek_print".to_string()),
                     Instr::ICmp(Val::Reg(Reg::R11), Val::RegOffset(Reg::R12, MAX_HEAP_SIZE_R12_OFFSET)),
                     Instr::IJumpLess(heap_check_end_tag.to_string()),
                     Instr::ICall("out_of_memory_error".to_string()),
@@ -1113,6 +1108,7 @@ fn compile_function_to_instrs(
         // Only try to free record arguments if there are any
         if func.signature.arg_types.iter().any(|(_, t)| matches!(t, ExprType::RecordPointer(_))) {
             let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+            ctx.rbp_offset = rax_offset;
 
             for (i, arg) in func.signature.arg_types.iter().enumerate() {
                 if let ExprType::RecordPointer(record_name) = &arg.1 {
