@@ -1,0 +1,36 @@
+(record node ((val int) (next node)))
+
+(fun insert_sorted ((val_to_insert int) (head node)) node
+    (if
+        (= head NULL)
+        (node val_to_insert NULL)
+        (let
+            ((curr_val (lookup head val)))
+            (if
+                (< val_to_insert curr_val)
+                (node curr_val head)
+                (node curr_val (insert_sorted val_to_insert (lookup head next)))
+            )
+        )
+    )
+)
+
+(fun index_of ((val_to_find int) (head node) (idx int)) int
+    (if
+        (= head NULL)
+        -1
+        (if 
+            (= (lookup head val) val_to_find)
+            idx
+            (index_of val_to_find (lookup head next) (add1 idx))
+        )
+    )
+)
+
+(let
+    ((head (node 0 (node 2 (node 5 (node 10 NULL))))))
+    (block
+        (insert_sorted 7 head)
+        (index_of 7 head 0)
+    )
+)

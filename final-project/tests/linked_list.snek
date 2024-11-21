@@ -1,0 +1,19 @@
+(record node ((val int) (next node)))
+
+(fun random ((head node)) bool
+    (if
+        (= (lookup head val) 0)
+        (false)
+        (true) 
+    )
+)
+
+
+(let
+    ((head (node 0 (node 1 NULL))))
+    (block
+        (print (random head))
+        (print (true))
+        (print (false))
+    )
+)

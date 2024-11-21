@@ -1,0 +1,25 @@
+(record bst_node ((val int) (left bst_node) (right bst_node)))
+
+(fun insert_value ((val int) (root bst_node)) bst_node
+    (if
+        (= root NULL)
+        (bst_node val NULL NULL)
+        (let
+            ((curr_val (lookup root val)))
+            (if 
+                (< val curr_val)
+                (bst_node (lookup root val) (insert_value val (lookup root left)) (lookup root right))
+                (bst_node (lookup root val) (lookup root left) (insert_value val (lookup root right)))
+            )
+        )
+    )
+    
+)
+
+(let
+    ((root (bst_node 5 NULL (bst_node 6 NULL (bst_node 7 NULL NULL)))))
+    (let
+            ((new_root (insert_value 10 root)))
+            (lookup (lookup (lookup (lookup new_root right) right) right) val)
+    )
+)

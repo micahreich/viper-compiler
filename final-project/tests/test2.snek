@@ -1,0 +1,6 @@
+(fun testing ((n int)) int
+  (sub1 n)
+)
+(block
+  (testing input)
+)
