@@ -13,6 +13,7 @@ pub const SIZE_OF_DWORD: i32 = 8;
 pub const MAX_HEAP_SIZE_R12_OFFSET: i32 = -16;
 pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -24;
 
+pub const BASE_CLASS_NAME: &str = "Object";
 
 #[derive(Debug)]
 pub enum Val {
@@ -88,14 +89,14 @@ pub const FUNCTION_EPILOGUE: [Instr; 2] = [
 //     instr_vec.push(Instr::IJumpEqual("null_pointer_error".to_string()));
 // ];
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Op1 {
     Add1,
     Sub1,
     Print,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Op2 {
     Plus,
     Minus,
@@ -107,7 +108,7 @@ pub enum Op2 {
     LessEqual,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Number(i32),
     Boolean(bool),
@@ -118,6 +119,7 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     RepeatUntil(Box<Expr>, Box<Expr>),
     Set(String, Box<Expr>),
+    RecordSet(String, String, Box<Expr>),
     Block(Vec<Expr>),
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     Call(FunctionSignature, Vec<Expr>),
@@ -165,12 +167,22 @@ pub struct RecordSignature {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClassSignature {
+    pub name: String,
+    pub inherits: String,
+    pub field_types: Vec<(String, ExprType)>,
+    pub methods: Vec<FunctionSignature>,
+    pub vtable_indices: HashMap<String, (i32, String)>
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionSignature {
     pub name: String,
     pub arg_types: Vec<(String, ExprType)>,
     pub return_type: ExprType,
 }
 
+#[derive(Clone)]
 pub struct Function {
     pub signature: FunctionSignature,
     pub body: Box<Expr>,
@@ -213,4 +225,5 @@ pub fn is_valid_identifier(s: &str) -> bool {
 pub struct ProgDefns {
     pub fn_signatures: HashMap<String, FunctionSignature>,
     pub record_signatures: HashMap<String, RecordSignature>,
+    pub class_signatures: HashMap<String, ClassSignature>
 }

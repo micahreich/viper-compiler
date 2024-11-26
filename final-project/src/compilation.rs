@@ -121,6 +121,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
 
             space_needed
         }
+        Expr::RecordSet(_, _, expr) => todo!(),
     }
 }
 
@@ -911,6 +912,7 @@ fn compile_to_instrs(
                 );
             }
         }
+        Expr::RecordSet(_, _, expr) => todo!(),
     }
 }
 

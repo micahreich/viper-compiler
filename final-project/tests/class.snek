@@ -1,0 +1,25 @@
+(class Vehicle Object 
+    ((make string))  
+    (
+        (fun honk () bool
+            (true)
+        )
+    )   
+
+)
+
+(class Car Vehicle
+    ((model string))
+    (
+        (fun beep () bool
+            (true)
+        )
+    )  
+)
+
+(block
+    (true)
+)
+
+
+
