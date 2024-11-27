@@ -14,6 +14,33 @@ pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -24;
 
 pub const BASE_CLASS_NAME: &str = "Object";
 
+pub const FUNCTION_EPILOGUE: [Instr; 2] = [
+    Instr::ILeave,
+    Instr::IRet
+];
+
+pub const RESERVED_KEYWORDS: [&str; 19] = [
+    "let",
+    "set!",
+    "if",
+    "block",
+    "repeat-until",
+    "true",
+    "false",
+    "+",
+    "-",
+    "*",
+    "<",
+    "<=",
+    ">",
+    ">=",
+    "=",
+    "add1",
+    "sub1",
+    "lookup",
+    "input",
+];
+
 #[derive(Debug)]
 pub enum Val {
     Reg(Reg),
@@ -64,28 +91,6 @@ pub enum Instr {
     ILeave,
     ISyscall
 }
-
-// pub const FUNCTION_PROLOGUE: [Instr; 2] = [
-//     // Instr::IPush(Val::Reg(Reg::RBP)), // push old rbp to stack
-//     // Instr::IMov(Val::Reg(Reg::RBP), Val::Reg(Reg::RSP)), // set rbp equal to the current rsp
-//     //                                   // Instr::IPush(Val::Reg(Reg::RBX)), // save rbx on the stack
-//     Instr::ILeave,
-//     Instr::IRet
-// ];
-
-pub const FUNCTION_EPILOGUE: [Instr; 2] = [
-    Instr::ILeave,
-    Instr::IRet
-];
-
-// pub const ALIGN_RSP_16_BYTES: Instr =
-//     Instr::IAnd(Val::Reg(Reg::RSP), Val::Imm(0xFFFFFFF0u32 as i32));
-
-// pub const MALLOC_CALL_WITH_NULLPTR_CHECK: [Instr; 3] = [
-//     instr_vec.push(Instr::ICall("malloc".to_string()));
-//     instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
-//     instr_vec.push(Instr::IJumpEqual("null_pointer_error".to_string()));
-// ];
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Op1 {
@@ -186,27 +191,18 @@ pub struct Function {
     pub body: Box<Expr>,
 }
 
-pub const RESERVED_KEYWORDS: [&str; 19] = [
-    "let",
-    "set!",
-    "if",
-    "block",
-    "repeat-until",
-    "true",
-    "false",
-    "+",
-    "-",
-    "*",
-    "<",
-    "<=",
-    ">",
-    ">=",
-    "=",
-    "add1",
-    "sub1",
-    "lookup",
-    "input",
-];
+pub struct ProgDefns {
+    pub fn_signatures: HashMap<String, FunctionSignature>,
+    pub record_signatures: HashMap<String, RecordSignature>,
+    pub class_signatures: HashMap<String, ClassSignature>
+}
+
+pub struct CompileCtx {
+    pub scope: VariableScope,
+    pub rbp_offset: i32,
+    pub rbx_offset: i32,
+    pub tag_id: i32,
+}
 
 pub fn is_valid_identifier(s: &str) -> bool {
     if RESERVED_KEYWORDS.into_iter().any(|k| k == s) {
@@ -219,17 +215,4 @@ pub fn is_valid_identifier(s: &str) -> bool {
     }
 
     true
-}
-
-pub struct ProgDefns {
-    pub fn_signatures: HashMap<String, FunctionSignature>,
-    pub record_signatures: HashMap<String, RecordSignature>,
-    pub class_signatures: HashMap<String, ClassSignature>
-}
-
-pub struct CompileCtx {
-    pub scope: VariableScope,
-    pub rbp_offset: i32,
-    pub rbx_offset: i32,
-    pub tag_id: i32,
 }
