@@ -1,5 +1,5 @@
 (class Vehicle Object 
-    ((make string))  
+    ((make string))
     (
         (fun honk () bool
             (true)
