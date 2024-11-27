@@ -1,0 +1,10 @@
+(record bst_node ((val int) (left bst_node) (right bst_node)))
+
+(let 
+    ((root (bst_node 10 NULL NULL)))
+    (block
+        (set! root left (bst_node 17 NULL NULL))
+        (print (lookup (lookup root left) val))
+        (print (lookup root val))
+    )
+)

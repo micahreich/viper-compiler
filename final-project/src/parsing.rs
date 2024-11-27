@@ -44,8 +44,6 @@ pub fn parse_block_expr(e_vec_sexp: &[Sexp], ctx: &ProgDefns) -> Expr {
 }
 
 pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
-    println!("parsing: {:?}", s);
-
     match s {
         Sexp::Atom(Atom::F(_)) => panic!("Invalid program: floats are not allowed"),
         Sexp::Atom(Atom::S(str)) => {
@@ -53,10 +51,8 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                 Expr::Boolean(true)
             } else if str == "false" {
                 Expr::Boolean(false)
-            } else if !is_valid_identifier(str) {
-                panic!("Invalid program: variable name is a reserved keyword");
             } else {
-                Expr::Id(str.clone())
+                Expr::Id(str.to_string())
             }
         }
         Sexp::Atom(Atom::I(x)) => match i32::try_from(*x) {
@@ -121,7 +117,7 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                 Expr::Set(name.clone(), Box::new(parse_expr(e1, ctx)))
             },
             [Sexp::Atom(S(op)), Sexp::Atom(S(record_name)), Sexp::Atom(S(field_name)), e1] if op == "set!" => {
-                Expr::RecordSet(record_name.clone(), field_name.clone(), Box::new(parse_expr(e1, ctx)))
+                Expr::RecordSetField(record_name.clone(), field_name.clone(), Box::new(parse_expr(e1, ctx)))
             }
             [Sexp::Atom(S(op)), e1, e2, e3] if op == "if" => Expr::If(
                 Box::new(parse_expr(e1, ctx)),
@@ -608,9 +604,7 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
                         Sexp::Atom(S(name)) if name == "fun" => {
                             functions.push(parse_defn(s1, &parse_ctx));
                         }
-                        Sexp::Atom(S(name)) if name == "record" => {
-                            println!("found a record definition, 2nd part");
-                        }
+                        Sexp::Atom(S(name)) if name == "record" => {}
                         Sexp::Atom(S(name)) if name == "class" => {
                             let parsed_funcs = parse_class_functions(s1, &parse_ctx);
                             class_functions.insert(parsed_funcs.0.clone(), parsed_funcs.1);

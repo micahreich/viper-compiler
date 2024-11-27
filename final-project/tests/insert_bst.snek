@@ -39,9 +39,8 @@
 )
 
 (let
-    ((root (bst_node 10 NULL NULL)) (search_res (search_value input root)))
-    (
-        block 
+    ((root (bst_node 10 (bst_node 3 NULL NULL) (bst_node 12 (bst_node 11 NULL NULL) (bst_node 20 NULL NULL)))) (search_res (search_value input root)))
+    (block 
         (print search_res)
         (let
             ((new_root (insert_value input root)))

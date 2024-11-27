@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use im::HashMap;
 use regex::Regex;
-use std::fmt;
 
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 
@@ -35,7 +34,6 @@ pub enum Reg {
     R12,
     R13,
     RBX,
-    RLIMIT_STRUCT
 }
 
 #[derive(Debug)]
@@ -119,7 +117,7 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     RepeatUntil(Box<Expr>, Box<Expr>),
     Set(String, Box<Expr>),
-    RecordSet(String, String, Box<Expr>),
+    RecordSetField(String, String, Box<Expr>),
     Block(Vec<Expr>),
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     Call(FunctionSignature, Vec<Expr>),
@@ -188,7 +186,7 @@ pub struct Function {
     pub body: Box<Expr>,
 }
 
-pub const RESERVED_KEYWORDS: [&str; 18] = [
+pub const RESERVED_KEYWORDS: [&str; 19] = [
     "let",
     "set!",
     "if",
@@ -206,7 +204,8 @@ pub const RESERVED_KEYWORDS: [&str; 18] = [
     "=",
     "add1",
     "sub1",
-    "alloc",
+    "lookup",
+    "input",
 ];
 
 pub fn is_valid_identifier(s: &str) -> bool {
@@ -226,4 +225,11 @@ pub struct ProgDefns {
     pub fn_signatures: HashMap<String, FunctionSignature>,
     pub record_signatures: HashMap<String, RecordSignature>,
     pub class_signatures: HashMap<String, ClassSignature>
+}
+
+pub struct CompileCtx {
+    pub scope: VariableScope,
+    pub rbp_offset: i32,
+    pub rbx_offset: i32,
+    pub tag_id: i32,
 }
