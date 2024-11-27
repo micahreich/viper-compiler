@@ -67,8 +67,8 @@ fn push_rbx_and_set_carry_forward(instr_vec: &mut Vec<Instr>, rbx_offset: i32, v
 
 /// Calculate the size of a record in bytes
 fn calculate_record_size(signature: &RecordSignature) -> i32 {
-    return i32::try_from((signature.field_types.len() + 1) * SIZE_OF_DWORD as usize)
-        .expect("Record size (+1) in bytes exceeds i32 max value");
+    i32::try_from((signature.field_types.len() + 1) * SIZE_OF_DWORD as usize)
+        .expect("Record size (+1) in bytes exceeds i32 max value")
 }
 
 /// Round a positive integer up to the next multiple of 16
@@ -1050,9 +1050,10 @@ fn compile_function_to_instrs(
 
     for (i, arg) in func.signature.arg_types.iter().enumerate() {
         let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
-        if let Some(_) = ctx
+        if ctx
             .scope
             .insert(arg.0.clone(), (arg_rbp_offset, arg.1.clone()))
+            .is_some()
         {
             panic!("Invalid: duplicate parameter {} in function", arg.0);
         }
@@ -1178,7 +1179,7 @@ fn compile_record_rc_decr_function_to_instrs(
 
     // Decrement the refcount by 1 and check if it hits zero
     instr_vec.extend(vec![
-        Instr::IComment(format!("Decrement refcount by 1, compare to 0").to_string()),
+        Instr::IComment("Decrement refcount by 1, compare to 0".to_string()),
         Instr::ISub(Val::RegOffset(Reg::RDI, 0), Val::Imm(1)),
         Instr::ICmp(Val::RegOffset(Reg::RDI, 0), Val::Imm(0)),
         Instr::IJumpNotEqual(format!("{}_record_rc_decr_end", signature.name)),
@@ -1279,10 +1280,9 @@ rc_incr:
 
         let asm_func_string = format!(
             "
-{}:
+{record_name}_record_rc_decr:
 {}
 ",
-            format!("{}_record_rc_decr", record_name),
             compile_instrs_to_str(&instr_vec)
         );
 

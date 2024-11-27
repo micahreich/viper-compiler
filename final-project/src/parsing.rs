@@ -1,6 +1,6 @@
 use core::panic;
-use std::hash::Hash;
 use im::{HashMap, HashSet};
+use std::hash::Hash;
 // use prettydiff::format_table::new;
 use sexp::Atom::*;
 use sexp::*;
@@ -35,7 +35,7 @@ pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, ctx: &ProgDefns) -> E
 
 pub fn parse_block_expr(e_vec_sexp: &[Sexp], ctx: &ProgDefns) -> Expr {
     let expression_vec: Vec<Expr> = e_vec_sexp.iter().map(|e| parse_expr(e, ctx)).collect();
-    
+
     if expression_vec.len() == 0 {
         panic!("Blocks must have at least one expression");
     }
@@ -115,9 +115,15 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
             [Sexp::Atom(S(op)), b_vec, e] if op == "let" => parse_let_expr(b_vec, e, ctx),
             [Sexp::Atom(S(op)), Sexp::Atom(S(name)), e1] if op == "set!" => {
                 Expr::Set(name.clone(), Box::new(parse_expr(e1, ctx)))
-            },
-            [Sexp::Atom(S(op)), Sexp::Atom(S(record_name)), Sexp::Atom(S(field_name)), e1] if op == "set!" => {
-                Expr::RecordSetField(record_name.clone(), field_name.clone(), Box::new(parse_expr(e1, ctx)))
+            }
+            [Sexp::Atom(S(op)), Sexp::Atom(S(record_name)), Sexp::Atom(S(field_name)), e1]
+                if op == "set!" =>
+            {
+                Expr::RecordSetField(
+                    record_name.clone(),
+                    field_name.clone(),
+                    Box::new(parse_expr(e1, ctx)),
+                )
             }
             [Sexp::Atom(S(op)), e1, e2, e3] if op == "if" => Expr::If(
                 Box::new(parse_expr(e1, ctx)),
@@ -136,19 +142,13 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                         let mut args: Vec<Expr> = Vec::new();
 
                         if vec.len() - 1 < func_signature.arg_types.len() {
-                            panic!(
-                                "Too few arguments when calling function: {}",
-                                name
-                            )
+                            panic!("Too few arguments when calling function: {}", name)
                         }
 
                         if vec.len() - 1 > func_signature.arg_types.len() {
-                            panic!(
-                                "Too many arguments when calling function: {}",
-                                name
-                            )
+                            panic!("Too many arguments when calling function: {}", name)
                         }
-                        
+
                         for i in 0..func_signature.arg_types.len() {
                             args.push(parse_expr(&vec[i + 1], ctx));
                         }
@@ -158,17 +158,11 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                         let mut args: Vec<Expr> = Vec::new();
 
                         if vec.len() - 1 < record_signature.field_types.len() {
-                            panic!(
-                                "Too few arguments when initializing record: {}",
-                                name
-                            )
+                            panic!("Too few arguments when initializing record: {}", name)
                         }
 
                         if vec.len() - 1 > record_signature.field_types.len() {
-                            panic!(
-                                "Too many arguments when initializing record: {}",
-                                name
-                            )
+                            panic!("Too many arguments when initializing record: {}", name)
                         }
 
                         for i in 0..record_signature.field_types.len() {
@@ -180,17 +174,11 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                         let mut args: Vec<Expr> = Vec::new();
 
                         if vec.len() - 1 < class_signature.field_types.len() {
-                            panic!(
-                                "Too few arguments when initializing record: {}",
-                                name
-                            )
+                            panic!("Too few arguments when initializing record: {}", name)
                         }
 
                         if vec.len() - 1 > class_signature.field_types.len() {
-                            panic!(
-                                "Too many arguments when initializing record: {}",
-                                name
-                            )
+                            panic!("Too many arguments when initializing record: {}", name)
                         }
 
                         for i in 0..class_signature.field_types.len() {
@@ -198,7 +186,7 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                         }
 
                         Expr::RecordInitializer(name.clone(), args)
-                    }  else {
+                    } else {
                         println!("{:?}", vec);
                         panic!(
                             "Invalid program: function call or record initialization to undefined: {}",
@@ -218,7 +206,7 @@ pub fn parse_type(s: &Sexp) -> ExprType {
         _ => {
             println!("{}", s);
             panic!("Unexpected type")
-        },
+        }
     }
 }
 
@@ -320,7 +308,10 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
                 for s1 in arg_vec {
                     let parsed_func = parse_func_signature(s1);
                     if parsed_func.name.starts_with("__") {
-                        panic!("Forbidden use of dunder in method name: {}", parsed_func.name);
+                        panic!(
+                            "Forbidden use of dunder in method name: {}",
+                            parsed_func.name
+                        );
                     }
                     methods.push(parsed_func);
                 }
@@ -333,7 +324,7 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
                 inherits: inherits_name.clone(),
                 field_types: class_fields,
                 methods: methods,
-                vtable_indices: HashMap::new()
+                vtable_indices: HashMap::new(),
             }
         }
     }
@@ -357,7 +348,7 @@ pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
             } else {
                 panic!("Malformed definition")
             };
-            
+
             let func_type = parse_type(&vec[vec.len() - 2]);
 
             let mut func_args: Vec<(String, ExprType)> = Vec::new();
@@ -401,7 +392,6 @@ pub fn parse_defn(s: &Sexp, ctx: &ProgDefns) -> Function {
     }
 }
 
-
 pub fn parse_class_defn(s: &Sexp, ctx: &ProgDefns, class_name: &str) -> Function {
     // Right now this function only works for pasing functions, will need to update
     // if defintions ever contain more than functions
@@ -416,10 +406,14 @@ pub fn parse_class_defn(s: &Sexp, ctx: &ProgDefns, class_name: &str) -> Function
             let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], ctx);
 
             Function {
-                signature: ctx.class_signatures.get(class_name).unwrap().methods
+                signature: ctx
+                    .class_signatures
+                    .get(class_name)
+                    .expect("Signature for class {class_name} not found")
+                    .methods
                     .iter()
                     .find(|m| m.name == *func_name)
-                    .unwrap()
+                    .expect("Method {func_name} not found for class {class_name}")
                     .clone(),
                 body: Box::new(func_body_expr),
             }
@@ -441,76 +435,96 @@ pub fn parse_class_functions(s: &Sexp, ctx: &ProgDefns) -> (String, Vec<Function
                 Sexp::Atom(S(name)) => name,
                 _ => panic!("Malformed definition"),
             };
-    
+
             match &sub_vec[4] {
                 Sexp::List(func_vec) => {
                     for s1 in func_vec {
                         class_functions.push(parse_class_defn(s1, ctx, class_name));
                     }
-                },
+                }
                 _ => panic!("Malformed class definition"),
             };
         }
         _ => panic!("Malformed program"),
     }
 
-   (class_name.to_string(),  class_functions)
+    (class_name.to_string(), class_functions)
 }
 
 pub fn create_inheritance_graph(ctx: &ProgDefns) -> HashMap<String, Vec<String>> {
     let mut inheritance_graph: HashMap<String, Vec<String>> = HashMap::new();
-    
+
     for class in ctx.class_signatures.values() {
         if !inheritance_graph.contains_key(&class.inherits) {
             inheritance_graph.insert(class.inherits.clone(), Vec::new());
         }
-        inheritance_graph.get_mut(&class.inherits).unwrap().push(class.name.clone());
+        inheritance_graph
+            .get_mut(&class.inherits)
+            .unwrap()
+            .push(class.name.clone());
     }
 
     inheritance_graph
 }
 
-pub fn resolve_vtable_indices(current_class: &String, visited: &mut HashSet<String>, inheritance_graph: &HashMap<String, Vec<String>>, ctx: &mut ProgDefns) {
+pub fn resolve_vtable_indices(
+    current_class: &String,
+    visited: &mut HashSet<String>,
+    inheritance_graph: &HashMap<String, Vec<String>>,
+    ctx: &mut ProgDefns,
+) {
     if visited.contains(current_class) {
         return;
     }
     visited.insert(current_class.clone());
 
-    let class_signature: ClassSignature = ctx.class_signatures.get(current_class).expect("Class signature not found").clone();
+    let class_signature = ctx
+        .class_signatures
+        .get(current_class)
+        .expect("Class signature not found")
+        .clone();
+
     println!("Class sig: {}", class_signature.name);
+
     let mut new_vtable_indices: HashMap<String, (i32, String)> = HashMap::new();
 
     // Resolve parent vtable indices first
     if class_signature.inherits != BASE_CLASS_NAME {
         let parent_name = class_signature.inherits.clone();
-        resolve_vtable_indices(&parent_name, visited, inheritance_graph, ctx);    
-            
+        resolve_vtable_indices(&parent_name, visited, inheritance_graph, ctx);
+
         // Copy parent vtable indices to current class
-        for (method_name, index) in &ctx.class_signatures.get(&class_signature.inherits).unwrap().vtable_indices {
+        for (method_name, index) in &ctx
+            .class_signatures
+            .get(&class_signature.inherits)
+            .unwrap()
+            .vtable_indices
+        {
             new_vtable_indices.insert(method_name.clone(), index.clone());
         }
     }
 
     for method in &class_signature.methods {
         if new_vtable_indices.contains_key(&method.name) {
-            // We are overriting a function!
+            // We are overriding a function!
             let curr_value = new_vtable_indices.get(&method.name).unwrap();
-            new_vtable_indices.insert(method.name.clone(), (curr_value.0 , current_class.clone()));
+            new_vtable_indices.insert(method.name.clone(), (curr_value.0, current_class.clone()));
         } else {
             let index = new_vtable_indices.len() as i32;
             new_vtable_indices.insert(method.name.clone(), (index, current_class.clone()));
         }
     }
 
-    ctx.class_signatures.get_mut(current_class).unwrap().vtable_indices = new_vtable_indices;
+    ctx.class_signatures
+        .get_mut(current_class)
+        .unwrap()
+        .vtable_indices = new_vtable_indices;
 
     if let Some(children) = inheritance_graph.get(current_class) {
         for child in children {
             resolve_vtable_indices(child, visited, inheritance_graph, ctx);
         }
     }
-
-    
 }
 
 pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns) {
@@ -550,8 +564,13 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
                     } else if name == "class" {
                         let class_signature = parse_class_signature(s1);
 
-                        if class_signature.inherits != BASE_CLASS_NAME && !class_signatures.contains_key(&class_signature.inherits) {
-                            panic!("Could not find inherited class: {}", class_signature.inherits);
+                        if class_signature.inherits != BASE_CLASS_NAME
+                            && !class_signatures.contains_key(&class_signature.inherits)
+                        {
+                            panic!(
+                                "Could not find inherited class: {}",
+                                class_signature.inherits
+                            );
                         }
                         if class_signatures
                             .insert(class_signature.name.clone(), class_signature.clone())
@@ -579,8 +598,14 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
     let inheritance_graph = create_inheritance_graph(&parse_ctx);
     let mut vtable_visited: HashSet<String> = HashSet::new();
     let class_keys: Vec<String> = parse_ctx.class_signatures.keys().cloned().collect();
+
     for class in class_keys {
-        resolve_vtable_indices(&class, &mut vtable_visited, &inheritance_graph, &mut parse_ctx);
+        resolve_vtable_indices(
+            &class,
+            &mut vtable_visited,
+            &inheritance_graph,
+            &mut parse_ctx,
+        );
     }
 
     match s {
