@@ -43,14 +43,14 @@ pub const RESERVED_KEYWORDS: [&str; 19] = [
     "input",
 ];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Val {
     Reg(Reg),
     Imm(i32),
     RegOffset(Reg, i32),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum Reg {
     RAX,
@@ -65,7 +65,7 @@ pub enum Reg {
     RBX,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Instr {
     IMov(Val, Val),
     IAdd(Val, Val),
@@ -179,7 +179,7 @@ pub struct ClassSignature {
     pub field_types: Vec<(String, ExprType)>,
     pub method_signatures: HashMap<String, FunctionSignature>,
     /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
-    pub vtable_indices: HashMap<String, (i32, String)>
+    pub vtable_indices: HashMap<String, (usize, String)>
 }
 
 #[derive(Debug, Clone, Hash)]

@@ -1,0 +1,24 @@
+(record node ((val int) (next node)))
+
+(fun traverse_to_end ((root node)) int
+    (if
+        (= root NULL)
+        -1
+        (let ((next_node (lookup root next)))
+            (if
+                (= next_node NULL)
+                (lookup root val)
+                (traverse_to_end next_node)
+            )
+        )
+    )
+)
+
+(let
+    ((node1 (node 1 NULL)) (node2 (node 2 NULL)) (node3 (node 17 NULL)))
+    (block
+        (set! node1 next node2)
+        (set! node2 next node3)
+        (traverse_to_end node1)
+    )
+)

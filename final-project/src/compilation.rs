@@ -1247,7 +1247,7 @@ fn compile_class_vtable(
     ];
 
     for (method_name, (vtable_idx, resolved_method_name)) in class.signature.vtable_indices.iter() {
-        vtable_indices[vtable_idx] = Instr::IDq(resolved_method_name.clone());
+        vtable_indices[*vtable_idx] = Instr::IDq(resolved_method_name.clone());
     }
 
     instr_vec.extend(vtable_indices);
@@ -1264,32 +1264,6 @@ extern free
 
 section .text
 global our_code_starts_here
-
-vtable_A:
-    dq method1_A  ; Pointer to A::method1
-    dq method2_A  ; Pointer to A::method2
-
-vtable_B:
-    dq method1_A  ; Pointer to A::method1 (inherited from A)
-    dq method2_B  ; Pointer to B::method2 (overrides A::method2)
-
-method1_A:
-    enter 0, 0
-    mov rax, 1
-    leave
-    ret
-
-method2_A:
-    enter 0, 0
-    mov rax, 2
-    leave
-    ret
-
-method2_B:
-    enter 0, 0
-    mov rax, 3
-    leave
-    ret
 
 out_of_memory_error:
   mov rdi, 4
@@ -1341,7 +1315,7 @@ rc_incr:
         asm_string.push_str(&asm_func_string);
     }
 
-    // Generate assembly for each function
+    // Generate assembly for each function body
     for (func_name, func) in prog.functions.iter() {
         println!("Starting compilation for {}", func_name);
         instr_vec.clear();
@@ -1356,10 +1330,9 @@ rc_incr:
 
         let asm_func_string = format!(
             "
-{}:
+{func_name}:
 {}
 ",
-            func_name,
             compile_instrs_to_str(&instr_vec)
         );
 
@@ -1374,10 +1347,9 @@ rc_incr:
 
         let asm_func_string = format!(
             "
-{}_VTable:
+{class_name}_VTable:
 {}
 ",
-            class_name,
             compile_instrs_to_str(&instr_vec)
         );
 

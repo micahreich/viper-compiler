@@ -518,7 +518,7 @@ fn resolve_vtable_indices_by_class (
         .expect("Class signature not found")
         .clone();
 
-    let mut new_vtable_indices: HashMap<String, (i32, String)> = HashMap::new();
+    let mut new_vtable_indices: HashMap<String, (usize, String)> = HashMap::new();
 
     // Resolve parent vtable indices first
     if class_signature.inherits != BASE_CLASS_NAME {
@@ -541,7 +541,7 @@ fn resolve_vtable_indices_by_class (
             let curr_value = new_vtable_indices.get(method_name).unwrap();
             new_vtable_indices.insert(method_name.clone(), (curr_value.0, current_class.clone()));
         } else {
-            let index = new_vtable_indices.len() as i32;
+            let index = new_vtable_indices.len();
             new_vtable_indices.insert(method_name.clone(), (index, current_class.clone()));
         }
     }
