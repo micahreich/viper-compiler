@@ -1,11 +1,13 @@
 use std::str::FromStr;
 
-use im::HashMap;
+use im::{HashMap, HashSet};
 use regex::Regex;
 
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 
-pub type Prog = Vec<Function>;
+pub type ProgramFunctions = Vec<Function>;
+pub type ProgramClasses = Vec<Class>;
+
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
 pub const SIZE_OF_DWORD: i32 = 8;
 
@@ -63,7 +65,7 @@ pub enum Reg {
     RBX,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Instr {
     IMov(Val, Val),
     IAdd(Val, Val),
@@ -89,7 +91,8 @@ pub enum Instr {
     IComment(String),
     IEnter(i32),
     ILeave,
-    ISyscall
+    ISyscall,
+    IDq(String),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -130,7 +133,7 @@ pub enum Expr {
 }
 
 #[repr(i32)] // Specify the representation
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprType {
     Number = 0,
     Boolean = 1,
@@ -174,11 +177,12 @@ pub struct ClassSignature {
     pub name: String,
     pub inherits: String,
     pub field_types: Vec<(String, ExprType)>,
-    pub methods: Vec<FunctionSignature>,
+    pub method_signatures: HashMap<String, FunctionSignature>,
+    /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
     pub vtable_indices: HashMap<String, (i32, String)>
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub struct FunctionSignature {
     pub name: String,
     pub arg_types: Vec<(String, ExprType)>,
@@ -191,10 +195,22 @@ pub struct Function {
     pub body: Box<Expr>,
 }
 
+#[derive(Clone)]
+pub struct Class {
+    pub signature: ClassSignature,
+    pub methods: HashMap<String, Function>,
+}
+
 pub struct ProgDefns {
     pub fn_signatures: HashMap<String, FunctionSignature>,
     pub record_signatures: HashMap<String, RecordSignature>,
     pub class_signatures: HashMap<String, ClassSignature>
+}
+
+pub struct Program {
+    pub functions: HashMap<String, Function>,
+    pub classes: HashMap<String, Class>,
+    pub main_expr: Box<Expr>,
 }
 
 pub struct CompileCtx {

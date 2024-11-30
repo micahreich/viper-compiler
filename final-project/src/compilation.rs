@@ -245,6 +245,7 @@ fn instr_to_str(i: &Instr) -> String {
         Instr::IEnter(n) => format!("enter {}, 0", n),
         Instr::ILeave => "leave".to_string(),
         Instr::ISyscall => "int 0x80".to_string(),
+        Instr::IDq(s) => format!("dq {}", s),
     }
 }
 
@@ -1023,25 +1024,14 @@ fn compile_function_to_instrs(
     // Set up the function prologue for our_code_starts_here, we need `stack_space_needed`-many
     // bytes for local variables and expression evaluation, and need `rbx_storage_stack_space_needed`-many
     // bytes for pushing/popping $rbx
-    let stack_space_needed_n_bytes = stack_space_needed(&func.body)
-        + 1 * SIZE_OF_DWORD
-        + if func.signature.name == MAIN_FN_TAG {
-            4 * SIZE_OF_DWORD
-        } else {
-            0
-        };
+    let stack_space_needed_n_bytes = stack_space_needed(&func.body) + 1 * SIZE_OF_DWORD;
     let rbx_storage_stack_space_needed_n_bytes = rbx_storage_stack_space_needed(&func.body);
     let total_stack_space_needed_n_bytes =
         stack_space_needed_n_bytes + rbx_storage_stack_space_needed_n_bytes;
 
     // Reset parts of the context (need to keep the tag_id as it was before)
-    ctx.rbx_offset = if func.signature.name == MAIN_FN_TAG {
-        -1 * 4 * SIZE_OF_DWORD
-    } else {
-        0
-    };
-
-    ctx.rbp_offset = -1 * rbx_storage_stack_space_needed_n_bytes + ctx.rbx_offset;
+    ctx.rbx_offset = 0;
+    ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
     ctx.scope.clear();
 
     instr_vec.push(Instr::IEnter(round_up_to_next_multiple_of_16(
@@ -1060,99 +1050,115 @@ fn compile_function_to_instrs(
     }
 
     // Compile the function body
-    let evaluated_return_type = if func.signature.name == MAIN_FN_TAG {
-        println!(
-            "compiling main function, ctx.rbp_offset: {}, args len {}",
-            ctx.rbp_offset,
-            func.signature.arg_types.len()
-        );
+    let ret = compile_to_instrs(&func.body, ctx, instr_vec, defns);
 
-        // Store R12 so we can restore it later
-        let old_r12_rbp_offset = push_reg_to_stack(instr_vec, 0, Reg::R12);
-        // Store current RBP to R12
-        instr_vec.push(Instr::IMov(Val::Reg(Reg::R12), Val::Reg(Reg::RBP)));
+    // Only try to decrement record arguments if there are any to avoid useless move instruction
+    if func
+        .signature
+        .arg_types
+        .iter()
+        .any(|(_, t)| matches!(t, ExprType::RecordPointer(_)))
+    {
+        let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+        ctx.rbp_offset = rax_offset;
 
-        // Push max heap size to stack (can index with [rbp - 16])
-        let max_heap_size_rbp_offset = push_reg_to_stack(instr_vec, old_r12_rbp_offset, Reg::RSI);
-
-        // Push current heap size (0) to stack (can index with [rbp - 24])
-        let curr_heap_size_rbp_offset = push_val_to_stack(instr_vec, max_heap_size_rbp_offset, 0);
-
-        // Store RBX so we can restore it later
-        let old_rbx_rbp_offset = push_reg_to_stack(instr_vec, curr_heap_size_rbp_offset, Reg::RBX);
-
-        instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(0)));
-
-        // input: input to the program
-        ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RDI);
-        ctx.scope
-            .insert("input".to_string(), (ctx.rbp_offset, ExprType::Number));
-
-        let ret = compile_to_instrs(&func.body, ctx, instr_vec, defns);
-
-        // Call print function with final result if this is the main function
-        if func.signature.name == MAIN_FN_TAG {
-            instr_vec.push(Instr::IComment("Print final result".to_string()));
-            instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-            instr_vec.push(Instr::IMov(
-                Val::Reg(Reg::RSI),
-                Val::Imm(ret.to_type_flag()),
-            ));
-
-            // TODO @dkrajews: make this support printing records
-            instr_vec.push(Instr::ICall("snek_print".to_string()));
-        };
-
-        // Restore RBX, R12
-        instr_vec.extend(vec![
-            Instr::IComment("Restore RBX, R12 after main fn body".to_string()),
-            Instr::IMov(
-                Val::Reg(Reg::RBX),
-                Val::RegOffset(Reg::RBP, old_rbx_rbp_offset),
-            ),
-            Instr::IMov(
-                Val::Reg(Reg::R12),
-                Val::RegOffset(Reg::RBP, old_r12_rbp_offset),
-            ),
-        ]);
-
-        ret
-    } else {
-        let ret = compile_to_instrs(&func.body, ctx, instr_vec, defns);
-
-        // Only try to decrement record arguments if there are any to avoid useless move instruction
-        if func
-            .signature
-            .arg_types
-            .iter()
-            .any(|(_, t)| matches!(t, ExprType::RecordPointer(_)))
-        {
-            let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-            ctx.rbp_offset = rax_offset;
-
-            for (i, arg) in func.signature.arg_types.iter().enumerate() {
-                if let ExprType::RecordPointer(record_name) = &arg.1 {
-                    // Decrement ref counter
-                    let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
-                    instr_vec.extend(vec![
-                        Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, arg_rbp_offset)),
-                        Instr::ICall(format!("{}_record_rc_decr", record_name)),
-                    ]);
-                }
+        for (i, arg) in func.signature.arg_types.iter().enumerate() {
+            if let ExprType::RecordPointer(record_name) = &arg.1 {
+                // Decrement ref counter
+                let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
+                instr_vec.extend(vec![
+                    Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, arg_rbp_offset)),
+                    Instr::ICall(format!("{}_record_rc_decr", record_name)),
+                ]);
             }
-
-            instr_vec.push(Instr::IMov(
-                Val::Reg(Reg::RAX),
-                Val::RegOffset(Reg::RBP, rax_offset),
-            ));
         }
 
-        ret
-    };
+        instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RAX),
+            Val::RegOffset(Reg::RBP, rax_offset),
+        ));
+    }
 
     instr_vec.extend(FUNCTION_EPILOGUE);
 
-    evaluated_return_type
+    ret
+}
+
+fn compile_main_expr_to_instrs(
+    expr: &Box<Expr>,
+    instr_vec: &mut Vec<Instr>,
+    ctx: &mut CompileCtx,
+    defns: &ProgDefns,
+) -> ExprType {
+    // Set up the function prologue for our_code_starts_here, we need `stack_space_needed`-many
+    // bytes for local variables and expression evaluation, and need `rbx_storage_stack_space_needed`-many
+    // bytes for pushing/popping $rbx
+    let stack_space_needed_n_bytes = stack_space_needed(expr) + 5 * SIZE_OF_DWORD;
+
+    let rbx_storage_stack_space_needed_n_bytes = rbx_storage_stack_space_needed(expr);
+    let total_stack_space_needed_n_bytes =
+        stack_space_needed_n_bytes + rbx_storage_stack_space_needed_n_bytes;
+
+    // Reset parts of the context (need to keep the tag_id as it was before)
+    ctx.rbx_offset = -1 * 4 * SIZE_OF_DWORD;
+    ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
+    ctx.scope.clear();
+
+    instr_vec.push(Instr::IEnter(round_up_to_next_multiple_of_16(
+        total_stack_space_needed_n_bytes,
+    )));
+
+    // Store R12 so we can restore it later
+    let old_r12_rbp_offset = push_reg_to_stack(instr_vec, 0, Reg::R12);
+
+    // Store current RBP to R12
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::R12), Val::Reg(Reg::RBP)));
+
+    // Push max heap size to stack (can index with [rbp - 16])
+    let max_heap_size_rbp_offset = push_reg_to_stack(instr_vec, old_r12_rbp_offset, Reg::RSI);
+
+    // Push current heap size (0) to stack (can index with [rbp - 24])
+    let curr_heap_size_rbp_offset = push_val_to_stack(instr_vec, max_heap_size_rbp_offset, 0);
+
+    // Store RBX so we can restore it later
+    let old_rbx_rbp_offset = push_reg_to_stack(instr_vec, curr_heap_size_rbp_offset, Reg::RBX);
+
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(0)));
+
+    // input: input to the program
+    ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RDI);
+    ctx.scope
+        .insert("input".to_string(), (ctx.rbp_offset, ExprType::Number));
+
+    let ret = compile_to_instrs(expr, ctx, instr_vec, defns);
+
+    // Call print function with final result
+    instr_vec.push(Instr::IComment("Print final result".to_string()));
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+    instr_vec.push(Instr::IMov(
+        Val::Reg(Reg::RSI),
+        Val::Imm(ret.to_type_flag()),
+    ));
+
+    // TODO @dkrajews: make this support printing records
+    instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+    // Restore RBX, R12
+    instr_vec.extend(vec![
+        Instr::IComment("Restore RBX, R12 after main fn body".to_string()),
+        Instr::IMov(
+            Val::Reg(Reg::RBX),
+            Val::RegOffset(Reg::RBP, old_rbx_rbp_offset),
+        ),
+        Instr::IMov(
+            Val::Reg(Reg::R12),
+            Val::RegOffset(Reg::RBP, old_r12_rbp_offset),
+        ),
+    ]);
+
+    instr_vec.extend(FUNCTION_EPILOGUE);
+
+    ret
 }
 
 /// Write the assembly code for a record's reference count decrement function, which decrements the reference count
@@ -1230,16 +1236,60 @@ fn compile_record_rc_decr_function_to_instrs(
     instr_vec.extend(FUNCTION_EPILOGUE);
 }
 
+fn compile_class_vtable(
+    class: &Class,
+    instr_vec: &mut Vec<Instr>,
+    defns: &ProgDefns,
+) {
+    let mut vtable_indices = vec![
+        Instr::IDq("NULL".to_string());
+        class.signature.vtable_indices.len()
+    ];
+
+    for (method_name, (vtable_idx, resolved_method_name)) in class.signature.vtable_indices.iter() {
+        vtable_indices[vtable_idx] = Instr::IDq(resolved_method_name.clone());
+    }
+
+    instr_vec.extend(vtable_indices);
+}
+
 /// Compile a program to a string of x86-64 assembly
-pub fn compile(p: &Prog, defns: &ProgDefns) -> String {
+pub fn compile(prog: &Program, defns: &ProgDefns) -> String {
     // Compile all functions to instruction strings
-    let mut asm_string: String = "extern snek_print
+    let mut asm_string: String = "
+extern snek_print
 extern snek_error
 extern malloc
 extern free
 
 section .text
 global our_code_starts_here
+
+vtable_A:
+    dq method1_A  ; Pointer to A::method1
+    dq method2_A  ; Pointer to A::method2
+
+vtable_B:
+    dq method1_A  ; Pointer to A::method1 (inherited from A)
+    dq method2_B  ; Pointer to B::method2 (overrides A::method2)
+
+method1_A:
+    enter 0, 0
+    mov rax, 1
+    leave
+    ret
+
+method2_A:
+    enter 0, 0
+    mov rax, 2
+    leave
+    ret
+
+method2_B:
+    enter 0, 0
+    mov rax, 3
+    leave
+    ret
 
 out_of_memory_error:
   mov rdi, 4
@@ -1273,9 +1323,11 @@ rc_incr:
         tag_id: 0,
     };
 
-    // Auto-gen assembly for freeing records recursively
+    let mut instr_vec: Vec<Instr> = Vec::new();
+
+    // Generate assembly for freeing records recursively
     for record_name in defns.record_signatures.keys() {
-        let mut instr_vec: Vec<Instr> = Vec::new();
+        instr_vec.clear();
         compile_record_rc_decr_function_to_instrs(&mut instr_vec, record_name, defns);
 
         let asm_func_string = format!(
@@ -1289,26 +1341,62 @@ rc_incr:
         asm_string.push_str(&asm_func_string);
     }
 
-    println!("Finished compiling free functions.");
-
     // Generate assembly for each function
-    for func in p {
-        println!("Starting compilation for {}", func.signature.name);
-        let mut instr_vec: Vec<Instr> = Vec::new();
-        let _func_return_type = compile_function_to_instrs(func, &mut instr_vec, &mut ctx, defns);
+    for (func_name, func) in prog.functions.iter() {
+        println!("Starting compilation for {}", func_name);
+        instr_vec.clear();
+        let eval_return_type = compile_function_to_instrs(func, &mut instr_vec, &mut ctx, defns);
+
+        if eval_return_type != func.signature.return_type {
+            panic!(
+                "Return type of function {} does not match function body, expected: {:?} but got {:?}",
+                func_name, func.signature.return_type, eval_return_type
+            );
+        }
 
         let asm_func_string = format!(
             "
 {}:
 {}
 ",
-            func.signature.name,
+            func_name,
             compile_instrs_to_str(&instr_vec)
         );
 
         asm_string.push_str(&asm_func_string);
-        println!("Finished compilation for {}", func.signature.name);
+        println!("Finished compilation for {}", func_name);
     }
+
+    // Generate assembly for class VTables
+    instr_vec.clear();
+    for (class_name, class) in prog.classes.iter() {
+        compile_class_vtable(class, &mut instr_vec, defns);
+
+        let asm_func_string = format!(
+            "
+{}_VTable:
+{}
+",
+            class_name,
+            compile_instrs_to_str(&instr_vec)
+        );
+
+        asm_string.push_str(&asm_func_string);
+    }
+
+    // Generate assembly for the main expression
+    instr_vec.clear();
+    let eval_return_type = compile_main_expr_to_instrs(&prog.main_expr, &mut instr_vec, &mut ctx, defns);
+    let asm_func_string = format!(
+        "
+{}:
+{}
+",
+        MAIN_FN_TAG,
+        compile_instrs_to_str(&instr_vec)
+    );
+
+    asm_string.push_str(&asm_func_string);
 
     asm_string
 }

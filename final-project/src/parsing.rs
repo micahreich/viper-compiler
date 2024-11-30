@@ -1,6 +1,5 @@
 use core::panic;
 use im::{HashMap, HashSet};
-use std::hash::Hash;
 // use prettydiff::format_table::new;
 use sexp::Atom::*;
 use sexp::*;
@@ -269,7 +268,7 @@ pub fn parse_record_signature(s: &Sexp) -> RecordSignature {
 
 pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
     match s {
-        Sexp::Atom(_) => panic!("Malformed definition"),
+        Sexp::Atom(_) => panic!("Malformed class definition"),
         Sexp::List(vec) => {
             match &vec[0] {
                 Sexp::Atom(S(name)) => {
@@ -283,47 +282,48 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
             let class_name = if let Sexp::Atom(S(name)) = &vec[1] {
                 name
             } else {
-                panic!("Malformed definition")
+                panic!("Malformed class definition")
             };
 
             let inherits_name = if let Sexp::Atom(S(name)) = &vec[2] {
                 name
             } else {
-                panic!("Malformed definition")
+                panic!("Malformed class definition")
             };
 
-            let mut class_fields: Vec<(String, ExprType)> = Vec::new();
+            // TODO @dkrajews: make this support the case of having no instance variables and only methods
+
+            let mut field_types: Vec<(String, ExprType)> = Vec::new();
 
             if let Sexp::List(arg_vec) = &vec[3] {
                 for s1 in arg_vec {
-                    class_fields.push(parse_argument(s1));
+                    field_types.push(parse_argument(s1));
                 }
             } else {
-                panic!("Malformed definition: expecting argument list after class name");
+                panic!("Malformed definition: expecting instance variable list after class name");
             }
 
-            let mut methods: Vec<FunctionSignature> = Vec::new();
+            let mut method_signatures: HashMap<String, FunctionSignature> = HashMap::new();
 
             if let Sexp::List(arg_vec) = &vec[4] {
                 for s1 in arg_vec {
-                    let parsed_func = parse_func_signature(s1);
-                    if parsed_func.name.starts_with("__") {
-                        panic!(
-                            "Forbidden use of dunder in method name: {}",
-                            parsed_func.name
-                        );
+                    let parsed_func_signature = parse_func_signature(s1);
+                    if method_signatures.insert(
+                        parsed_func_signature.name.clone(),
+                        parsed_func_signature.clone(),
+                    ).is_some() {
+                        panic!("Duplicate method definition: {} in class {class_name}", parsed_func_signature.name);
                     }
-                    methods.push(parsed_func);
                 }
             } else {
-                panic!("Malformed definition: expecting argument list after function name");
+                panic!("Malformed definition: expecting argument list after method name");
             }
 
             ClassSignature {
                 name: class_name.clone(),
                 inherits: inherits_name.clone(),
-                field_types: class_fields,
-                methods: methods,
+                field_types: field_types,
+                method_signatures: method_signatures,
                 vtable_indices: HashMap::new(),
             }
         }
@@ -370,7 +370,11 @@ pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
     }
 }
 
-pub fn parse_defn(s: &Sexp, ctx: &ProgDefns) -> Function {
+pub fn parse_func_defn(
+    s: &Sexp,
+    ctx: &ProgDefns,
+    fn_signatures: &HashMap<String, FunctionSignature>
+) -> Function {
     // Right now this function only works for pasing functions, will need to update
     // if defintions ever contain more than functions
 
@@ -384,7 +388,7 @@ pub fn parse_defn(s: &Sexp, ctx: &ProgDefns) -> Function {
             let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], ctx);
 
             Function {
-                signature: ctx.fn_signatures.get(func_name).unwrap().clone(),
+                signature: fn_signatures.get(func_name).unwrap().clone(),
                 body: Box::new(func_body_expr),
             }
         }
@@ -392,54 +396,67 @@ pub fn parse_defn(s: &Sexp, ctx: &ProgDefns) -> Function {
     }
 }
 
-pub fn parse_class_defn(s: &Sexp, ctx: &ProgDefns, class_name: &str) -> Function {
-    // Right now this function only works for pasing functions, will need to update
-    // if defintions ever contain more than functions
+// pub fn parse_method_defn(s: &Sexp, ctx: &ProgDefns, class_name: &str) -> Function {
+//     // Right now this function only works for pasing functions, will need to update
+//     // if defintions ever contain more than functions
 
+//     match s {
+//         Sexp::List(sub_vec) => {
+//             let func_name = match &sub_vec[1] {
+//                 Sexp::Atom(S(name)) => name,
+//                 _ => panic!("Malformed definition"),
+//             };
+
+//             let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], ctx);
+
+//             Function {
+//                 signature: ctx
+//                     .class_signatures
+//                     .get(class_name)
+//                     .expect("Signature for class {class_name} not found")
+//                     .method_signatures
+//                     .iter()
+//                     .find(|m| m.name == *func_name)
+//                     .expect("Method {func_name} not found for class {class_name}")
+//                     .clone(),
+//                 body: Box::new(func_body_expr),
+//             }
+//         }
+//         _ => panic!("Malformed program"),
+//     }
+// }
+
+pub fn parse_class_methods(s: &Sexp, ctx: &ProgDefns) -> Class {
     match s {
         Sexp::List(sub_vec) => {
-            let func_name = match &sub_vec[1] {
-                Sexp::Atom(S(name)) => name,
-                _ => panic!("Malformed definition"),
-            };
-
-            let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], ctx);
-
-            Function {
-                signature: ctx
-                    .class_signatures
-                    .get(class_name)
-                    .expect("Signature for class {class_name} not found")
-                    .methods
-                    .iter()
-                    .find(|m| m.name == *func_name)
-                    .expect("Method {func_name} not found for class {class_name}")
-                    .clone(),
-                body: Box::new(func_body_expr),
-            }
-        }
-        _ => panic!("Malformed program"),
-    }
-}
-
-pub fn parse_class_functions(s: &Sexp, ctx: &ProgDefns) -> (String, Vec<Function>) {
-    // Right now this function only works for pasing functions, will need to update
-    // if defintions ever contain more than functions
-
-    let mut class_functions: Vec<Function> = Vec::new();
-    let mut class_name: &String;
-
-    match s {
-        Sexp::List(sub_vec) => {
-            class_name = match &sub_vec[1] {
+            let class_name = match &sub_vec[1] {
                 Sexp::Atom(S(name)) => name,
                 _ => panic!("Malformed definition"),
             };
 
             match &sub_vec[4] {
                 Sexp::List(func_vec) => {
+                    let mut class_methods: HashMap<String, Function> = HashMap::new();
+
+                    let class_signature = ctx
+                        .class_signatures
+                        .get(class_name)
+                        .expect("Class signature not found");
+
                     for s1 in func_vec {
-                        class_functions.push(parse_class_defn(s1, ctx, class_name));
+                        class_methods.insert(
+                            class_signature.name.clone(),
+                            parse_func_defn(s1, ctx, &class_signature.method_signatures)
+                        );
+                    }
+
+                    Class {
+                        signature: ctx
+                            .class_signatures
+                            .get(class_name)
+                            .expect("Class signature not found")
+                            .clone(),
+                        methods: class_methods,
                     }
                 }
                 _ => panic!("Malformed class definition"),
@@ -448,54 +465,68 @@ pub fn parse_class_functions(s: &Sexp, ctx: &ProgDefns) -> (String, Vec<Function
         _ => panic!("Malformed program"),
     }
 
-    (class_name.to_string(), class_functions)
+    panic!("Malformed program");
 }
 
-pub fn create_inheritance_graph(ctx: &ProgDefns) -> HashMap<String, Vec<String>> {
+pub fn create_inheritance_graph(class_signatures: &HashMap<String, ClassSignature>) -> HashMap<String, Vec<String>> {
     let mut inheritance_graph: HashMap<String, Vec<String>> = HashMap::new();
 
-    for class in ctx.class_signatures.values() {
-        if !inheritance_graph.contains_key(&class.inherits) {
-            inheritance_graph.insert(class.inherits.clone(), Vec::new());
+    for (class_name, class_signature) in class_signatures {
+        if !inheritance_graph.contains_key(&class_signature.inherits) {
+            inheritance_graph.insert(class_signature.inherits.clone(), Vec::new());
         }
+
         inheritance_graph
-            .get_mut(&class.inherits)
+            .get_mut(&class_signature.inherits)
             .unwrap()
-            .push(class.name.clone());
+            .push(class_signature.name.clone());
     }
 
     inheritance_graph
 }
 
 pub fn resolve_vtable_indices(
+    class_signatures: &HashMap<String, ClassSignature>,
+    inheritance_graph: &HashMap<String, Vec<String>>,
+) {
+    let mut vtable_visited: HashSet<String> = HashSet::new();
+
+    class_signatures.keys().map(|class| {
+        resolve_vtable_indices_by_class(
+            class,
+            &mut vtable_visited,
+            inheritance_graph,
+            class_signatures,
+        );
+    });
+}
+
+fn resolve_vtable_indices_by_class (
     current_class: &String,
     visited: &mut HashSet<String>,
     inheritance_graph: &HashMap<String, Vec<String>>,
-    ctx: &mut ProgDefns,
+    class_signatures: &HashMap<String, ClassSignature>,
 ) {
     if visited.contains(current_class) {
         return;
     }
+
     visited.insert(current_class.clone());
 
-    let class_signature = ctx
-        .class_signatures
+    let class_signature = class_signatures
         .get(current_class)
         .expect("Class signature not found")
         .clone();
-
-    println!("Class sig: {}", class_signature.name);
 
     let mut new_vtable_indices: HashMap<String, (i32, String)> = HashMap::new();
 
     // Resolve parent vtable indices first
     if class_signature.inherits != BASE_CLASS_NAME {
         let parent_name = class_signature.inherits.clone();
-        resolve_vtable_indices(&parent_name, visited, inheritance_graph, ctx);
+        resolve_vtable_indices_by_class(&parent_name, visited, inheritance_graph, class_signatures);
 
         // Copy parent vtable indices to current class
-        for (method_name, index) in &ctx
-            .class_signatures
+        for (method_name, index) in class_signatures
             .get(&class_signature.inherits)
             .unwrap()
             .vtable_indices
@@ -504,36 +535,42 @@ pub fn resolve_vtable_indices(
         }
     }
 
-    for method in &class_signature.methods {
-        if new_vtable_indices.contains_key(&method.name) {
+    for (method_name, method) in &class_signature.method_signatures {
+        if new_vtable_indices.contains_key(method_name) {
             // We are overriding a function!
-            let curr_value = new_vtable_indices.get(&method.name).unwrap();
-            new_vtable_indices.insert(method.name.clone(), (curr_value.0, current_class.clone()));
+            let curr_value = new_vtable_indices.get(method_name).unwrap();
+            new_vtable_indices.insert(method_name.clone(), (curr_value.0, current_class.clone()));
         } else {
             let index = new_vtable_indices.len() as i32;
-            new_vtable_indices.insert(method.name.clone(), (index, current_class.clone()));
+            new_vtable_indices.insert(method_name.clone(), (index, current_class.clone()));
         }
     }
 
-    ctx.class_signatures
+    class_signatures
         .get_mut(current_class)
         .unwrap()
         .vtable_indices = new_vtable_indices;
 
     if let Some(children) = inheritance_graph.get(current_class) {
         for child in children {
-            resolve_vtable_indices(child, visited, inheritance_graph, ctx);
+            resolve_vtable_indices_by_class(child, visited, inheritance_graph, class_signatures);
         }
     }
 }
 
-pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns) {
-    // Prog is made up of a series of definitions (funcs) and an expression
-
-    // First go through program looking for function, record definitions to fill in signatures
+pub fn parse_prog(s: &Sexp) -> Program {
+    // First go through program looking for function, record definitions, class definitions to fill in signatures
     let mut function_signatures: HashMap<String, FunctionSignature> = HashMap::new();
     let mut record_signatures: HashMap<String, RecordSignature> = HashMap::new();
     let mut class_signatures: HashMap<String, ClassSignature> = HashMap::new();
+
+    // let mut func_signatures: HashMap<FunctionSignature> = Vec::new();
+    // let mut record_signatures: Vec<RecordSignature> = Vec::new();
+    // let mut class_signatures: Vec<ClassSignature> = Vec::new();
+
+    // let mut parsed_func_signatures: HashSet<String> = HashSet::new();
+    // let mut parsed_record_signatures: HashSet<String> = HashSet::new();
+    // let mut parsed_class_signatures: HashSet<String> = HashSet::new();
 
     if let Sexp::List(vec) = s {
         for s1 in vec {
@@ -543,17 +580,14 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
                 }
                 if let Sexp::Atom(S(name)) = &sub_vec[0] {
                     if name == "fun" {
-                        let signature = parse_func_signature(s1);
-
+                        let func_signature = parse_func_signature(s1);
                         if function_signatures
-                            .insert(signature.name.clone(), signature.clone())
+                            .insert(func_signature.name.clone(), func_signature.clone())
                             .is_some()
                         {
-                            panic!("Duplicate function definition: {}", signature.name);
+                            panic!("Duplicate function definition: {}", func_signature.name);
                         }
                     } else if name == "record" {
-                        println!("found a record definition");
-
                         let record_signature = parse_record_signature(s1);
                         if record_signatures
                             .insert(record_signature.name.clone(), record_signature.clone())
@@ -572,11 +606,12 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
                                 class_signature.inherits
                             );
                         }
+
                         if class_signatures
                             .insert(class_signature.name.clone(), class_signature.clone())
                             .is_some()
                         {
-                            panic!("Duplicate record definition: {}", class_signature.name);
+                            panic!("Duplicate class definition: {}", class_signature.name);
                         }
                     }
                 }
@@ -584,29 +619,19 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
         }
     }
 
-    println!("{:?}", record_signatures);
+    let inheritance_graph = create_inheritance_graph(&class_signatures);
+    resolve_vtable_indices(&class_signatures, &inheritance_graph);
 
-    let mut parse_ctx: ProgDefns = ProgDefns {
+    // Build up program with parsed function bodies, class method bodies
+    let mut parse_ctx = ProgDefns {
         fn_signatures: function_signatures,
         record_signatures: record_signatures,
         class_signatures: class_signatures,
     };
 
-    let mut functions: Vec<Function> = Vec::new();
-    let mut class_functions: HashMap<String, Vec<Function>> = HashMap::new();
-
-    let inheritance_graph = create_inheritance_graph(&parse_ctx);
-    let mut vtable_visited: HashSet<String> = HashSet::new();
-    let class_keys: Vec<String> = parse_ctx.class_signatures.keys().cloned().collect();
-
-    for class in class_keys {
-        resolve_vtable_indices(
-            &class,
-            &mut vtable_visited,
-            &inheritance_graph,
-            &mut parse_ctx,
-        );
-    }
+    let mut functions: HashMap<String, Function> = HashMap::new();
+    let mut classes:HashMap<String, Class> = HashMap::new();
+    let mut main_expr: Option<Box<Expr>> = None;
 
     match s {
         Sexp::Atom(_) => panic!("Malformed program"),
@@ -614,37 +639,21 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
             for s1 in vec {
                 match s1 {
                     Sexp::Atom(_) => {
-                        functions.push(Function {
-                            signature: FunctionSignature {
-                                name: MAIN_FN_TAG.to_string(),
-                                arg_types: Vec::new(),
-                                return_type: ExprType::Main,
-                            },
-                            body: Box::new(parse_expr(s1, &parse_ctx)),
-                        });
-
-                        return (functions, class_functions, parse_ctx);
+                        // This is when the main expression is just a value like a number or boolean
+                        main_expr = Some(Box::new(parse_expr(s1, &parse_ctx)));
                     }
                     Sexp::List(sub_vec) => match &sub_vec[0] {
                         Sexp::Atom(S(name)) if name == "fun" => {
-                            functions.push(parse_defn(s1, &parse_ctx));
+                            let f = parse_func_defn(s1, &parse_ctx, &parse_ctx.fn_signatures);
+                            functions.insert(f.signature.name.clone(), f);
                         }
                         Sexp::Atom(S(name)) if name == "record" => {}
                         Sexp::Atom(S(name)) if name == "class" => {
-                            let parsed_funcs = parse_class_functions(s1, &parse_ctx);
-                            class_functions.insert(parsed_funcs.0.clone(), parsed_funcs.1);
+                            let c = parse_class_methods(s1, &parse_ctx);
+                            classes.insert(c.signature.name.clone(), c);
                         }
                         Sexp::Atom(_) => {
-                            functions.push(Function {
-                                signature: FunctionSignature {
-                                    name: MAIN_FN_TAG.to_string(),
-                                    arg_types: Vec::new(),
-                                    return_type: ExprType::Main,
-                                },
-                                body: Box::new(parse_expr(s1, &parse_ctx)),
-                            });
-
-                            return (functions, class_functions, parse_ctx);
+                            main_expr = Some(Box::new(parse_expr(s1, &parse_ctx)));
                         }
                         _ => panic!("Malformed program"),
                     },
@@ -653,5 +662,9 @@ pub fn parse_prog(s: &Sexp) -> (Prog, HashMap<String, Vec<Function>>, ProgDefns)
         }
     }
 
-    (functions, class_functions, parse_ctx)
+    Program {
+        functions: functions,
+        classes: classes,
+        main_expr: main_expr.expect("Main expression not found"),
+    }
 }
