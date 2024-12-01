@@ -17,8 +17,12 @@
     )  
 )
 
-(block
-    (true)
+(let
+    ((tesla (Car "model x")))
+    (block
+        (call tesla beep)
+    )
+
 )
 
 

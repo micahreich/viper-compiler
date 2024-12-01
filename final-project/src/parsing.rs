@@ -131,11 +131,29 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => {
                 Expr::RepeatUntil(Box::new(parse_expr(e1, ctx)), Box::new(parse_expr(e2, ctx)))
-            }
+            },
             _ => match &vec[0] {
                 Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], ctx),
                 Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
                 Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
+                Sexp::Atom(S(val)) if val == "call" => {
+                    if let Expr::Id(func_name) = parse_expr(&vec[1], ctx) {
+                        let mut args: Vec<Expr> = Vec::new();
+                        // call obj_name method_name arg1 arg2 arg3...
+
+                        // Since the first argument to call is an object
+                        // that can't be resolved during parsing, we postpone
+                        // checking validity of the method call to the actually compiling step
+                        let vec_len = vec.len();
+                        for i in 3..vec_len {
+                            args.push(parse_expr(&vec[i], ctx));
+                        }
+    
+                        Expr::CallObjectMethod(Box::new(parse_expr(&vec[0], ctx)), func_name, args)
+                    } else {
+                        panic!("Method names must be provided at compile time when calling")
+                    }
+                },
                 Sexp::Atom(S(name)) => {
                     if let Some(func_signature) = ctx.fn_signatures.get(name) {
                         let mut args: Vec<Expr> = Vec::new();
@@ -173,18 +191,18 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                         let mut args: Vec<Expr> = Vec::new();
 
                         if vec.len() - 1 < class_signature.field_types.len() {
-                            panic!("Too few arguments when initializing record: {}", name)
+                            panic!("Too few arguments when initializing class: {}", name)
                         }
 
                         if vec.len() - 1 > class_signature.field_types.len() {
-                            panic!("Too many arguments when initializing record: {}", name)
+                            panic!("Too many arguments when initializing class: {}", name)
                         }
 
                         for i in 0..class_signature.field_types.len() {
                             args.push(parse_expr(&vec[i + 1], ctx));
                         }
 
-                        Expr::RecordInitializer(name.clone(), args)
+                        Expr::ObjectInitializer(name.clone(), args)
                     } else {
                         println!("{:?}", vec);
                         panic!(
@@ -486,27 +504,34 @@ pub fn create_inheritance_graph(class_signatures: &HashMap<String, ClassSignatur
 }
 
 pub fn resolve_vtable_indices(
-    class_signatures: &HashMap<String, ClassSignature>,
+    class_signatures: &mut HashMap<String, ClassSignature>,
     inheritance_graph: &HashMap<String, Vec<String>>,
 ) {
     let mut vtable_visited: HashSet<String> = HashSet::new();
 
-    class_signatures.keys().map(|class| {
+    // Clone :( the class names so that no borrowing occurs of class_signatures
+    let class_names: Vec<String> = class_signatures.keys().cloned().collect();
+
+    for class in class_names {
         resolve_vtable_indices_by_class(
-            class,
+            &class,
             &mut vtable_visited,
             inheritance_graph,
             class_signatures,
         );
-    });
+    }
 }
 
 fn resolve_vtable_indices_by_class (
     current_class: &String,
     visited: &mut HashSet<String>,
     inheritance_graph: &HashMap<String, Vec<String>>,
-    class_signatures: &HashMap<String, ClassSignature>,
+    class_signatures: &mut HashMap<String, ClassSignature>,
 ) {
+    // This method is a DFS over the inheritance graph to ensure
+    // all parent vtable indices are populated before populating the child's indices
+
+    // if we already computed this class' indices, we can just return
     if visited.contains(current_class) {
         return;
     }
@@ -526,7 +551,7 @@ fn resolve_vtable_indices_by_class (
         resolve_vtable_indices_by_class(&parent_name, visited, inheritance_graph, class_signatures);
 
         // Copy parent vtable indices to current class
-        for (method_name, index) in class_signatures
+        for (method_name, index) in &class_signatures
             .get(&class_signature.inherits)
             .unwrap()
             .vtable_indices
@@ -535,6 +560,12 @@ fn resolve_vtable_indices_by_class (
         }
     }
 
+    /*
+     * VTable indices are stored/defined as follows:
+     * - Each parent function should map to the same vtable index as it did in the parent class
+     *  (note this won't really work for multiple inheritance which we don't support)
+     * - Each new function is mapped sequentially to a new index in the vtable
+     */
     for (method_name, method) in &class_signature.method_signatures {
         if new_vtable_indices.contains_key(method_name) {
             // We are overriding a function!
@@ -546,11 +577,13 @@ fn resolve_vtable_indices_by_class (
         }
     }
 
+    // Overrite the class' vtable indices (did it this way due to borrowing weirdness)
     class_signatures
         .get_mut(current_class)
         .unwrap()
         .vtable_indices = new_vtable_indices;
 
+    // Recurse on the children to populate all the remaining indices
     if let Some(children) = inheritance_graph.get(current_class) {
         for child in children {
             resolve_vtable_indices_by_class(child, visited, inheritance_graph, class_signatures);
@@ -619,8 +652,10 @@ pub fn parse_prog(s: &Sexp) -> Program {
         }
     }
 
+    // This step will populate each class's vtable map, which
+    // stores an index for each method that it defines and inherits
     let inheritance_graph = create_inheritance_graph(&class_signatures);
-    resolve_vtable_indices(&class_signatures, &inheritance_graph);
+    resolve_vtable_indices(&mut class_signatures, &inheritance_graph);
 
     // Build up program with parsed function bodies, class method bodies
     let mut parse_ctx = ProgDefns {
@@ -647,7 +682,7 @@ pub fn parse_prog(s: &Sexp) -> Program {
                             let f = parse_func_defn(s1, &parse_ctx, &parse_ctx.fn_signatures);
                             functions.insert(f.signature.name.clone(), f);
                         }
-                        Sexp::Atom(S(name)) if name == "record" => {}
+                        Sexp::Atom(S(name)) if name == "record" => { }
                         Sexp::Atom(S(name)) if name == "class" => {
                             let c = parse_class_methods(s1, &parse_ctx);
                             classes.insert(c.signature.name.clone(), c);
@@ -665,6 +700,8 @@ pub fn parse_prog(s: &Sexp) -> Program {
     Program {
         functions: functions,
         classes: classes,
+        // Only need signatures here since records don't have anything to compile
+        record_signatures: parse_ctx.record_signatures,
         main_expr: main_expr.expect("Main expression not found"),
     }
 }

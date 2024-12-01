@@ -25,8 +25,8 @@ fn main() -> std::io::Result<()> {
         Err(_) => panic!("Invalid: failed to parse sexp"),
     };
 
-    let (parsing_result, class_funcs, ctx) = parsing::parse_prog(&parsed_contents);
-    let compilation_result = compilation::compile(&parsing_result, &ctx);
+    let parsed_program = parsing::parse_prog(&parsed_contents);
+    let compilation_result = compilation::compile(&parsed_program);
 
     let mut out_file = File::create(out_name)?;
     out_file.write_all(compilation_result.as_bytes())?;

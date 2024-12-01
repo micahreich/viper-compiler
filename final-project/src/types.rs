@@ -128,7 +128,9 @@ pub enum Expr {
     RecordSetField(String, String, Box<Expr>),
     Block(Vec<Expr>),
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
-    Call(FunctionSignature, Vec<Expr>),
+    ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
+    Call(FunctionSignature, Vec<Expr>), // this is for calling non object functions
+    CallObjectMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
     Lookup(Box<Expr>, String), // recordpointer, fieldname
 }
 
@@ -140,6 +142,7 @@ pub enum ExprType {
     RecordPointer(String) = 2,
     Main = 3,
     RecordNullPtr = 4,
+    ObjectPointer(String) = 5,
 }
 
 impl ExprType {
@@ -150,6 +153,7 @@ impl ExprType {
             ExprType::RecordPointer(_) => 2,
             ExprType::Main => 3,
             ExprType::RecordNullPtr => 4,
+            ExprType::ObjectPointer(_) => 5,
         }
     }
 }
@@ -210,6 +214,7 @@ pub struct ProgDefns {
 pub struct Program {
     pub functions: HashMap<String, Function>,
     pub classes: HashMap<String, Class>,
+    pub record_signatures: HashMap<String, RecordSignature>,
     pub main_expr: Box<Expr>,
 }
 

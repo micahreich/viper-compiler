@@ -138,6 +138,8 @@ fn stack_space_needed(e: &Expr) -> i32 {
             .iter()
             .fold(SIZE_OF_DWORD, |acc, e| acc + stack_space_needed(e)),
         Expr::RecordSetField(_, _, expr) => stack_space_needed(expr) + 1 * SIZE_OF_DWORD,
+        Expr::ObjectInitializer(_, vec) => todo!(),
+        Expr::CallObjectMethod(expr, _, vec) => todo!(),
     }
 }
 
@@ -196,6 +198,8 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
             space_needed_for_args + SIZE_OF_DWORD
         }
         Expr::Lookup(expr, _) => rbx_storage_stack_space_needed(expr) + SIZE_OF_DWORD,
+        Expr::ObjectInitializer(_, vec) => todo!(),
+        Expr::CallObjectMethod(expr, _, vec) => todo!(),
     }
 }
 
@@ -288,7 +292,7 @@ fn compile_to_instrs(
     e: &Expr,
     ctx: &mut CompileCtx,
     instr_vec: &mut Vec<Instr>,
-    defns: &ProgDefns,
+    program: &Program,
 ) -> ExprType {
     match e {
         Expr::Boolean(b) => {
@@ -329,7 +333,7 @@ fn compile_to_instrs(
             }
         },
         Expr::UnOp(op, e) => {
-            let e_type: ExprType = compile_to_instrs(e, ctx, instr_vec, defns);
+            let e_type: ExprType = compile_to_instrs(e, ctx, instr_vec, program);
 
             match op {
                 Op1::Print => {
@@ -337,7 +341,7 @@ fn compile_to_instrs(
                         let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
                         ctx.rbp_offset = e_rbp_offset;
 
-                        let record_def = defns
+                        let record_def = program
                             .record_signatures
                             .get(name)
                             .expect("Record definition not found");
@@ -414,11 +418,11 @@ fn compile_to_instrs(
         }
         Expr::BinOp(op, e1, e2) => {
             // Compile e2 first so that subtraction works nicely, leaves e1 in rax
-            let e2_type = compile_to_instrs(e2, ctx, instr_vec, defns);
+            let e2_type = compile_to_instrs(e2, ctx, instr_vec, program);
             let rbp_offset_e2_eval = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = rbp_offset_e2_eval;
 
-            let e1_type = compile_to_instrs(e1, ctx, instr_vec, defns); // e1 is in rax
+            let e1_type = compile_to_instrs(e1, ctx, instr_vec, program); // e1 is in rax
 
             match op {
                 Op2::Equal => match (e1_type, e2_type) {
@@ -526,7 +530,7 @@ fn compile_to_instrs(
                     panic!("Reserved keyword or invalid identifier used as variable name in let expression: {var_name}");
                 }
 
-                let var_e_type = compile_to_instrs(var_e, ctx, instr_vec, defns);
+                let var_e_type = compile_to_instrs(var_e, ctx, instr_vec, program);
                 ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
 
                 if newly_created_variable_scope
@@ -543,7 +547,7 @@ fn compile_to_instrs(
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             // Compile the expression
-            let e_type = compile_to_instrs(e, ctx, instr_vec, defns);
+            let e_type = compile_to_instrs(e, ctx, instr_vec, program);
             ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
 
             // Check for any pointer types in the bindings and decrement the references
@@ -577,7 +581,7 @@ fn compile_to_instrs(
 
             if let ExprType::RecordPointer(record_name) = id_type.clone() {
                 ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
-                let e1_type = compile_to_instrs(e1, ctx, instr_vec, defns);
+                let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
                 ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
                 if e1_type != id_type {
@@ -604,7 +608,7 @@ fn compile_to_instrs(
                 ]);
             } else {
                 // TODO @dkrajews, @mreich: do we need to set rbx = 0 explicitly here?
-                let e1_type = compile_to_instrs(e1, ctx, instr_vec, defns);
+                let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
 
                 if e1_type != id_type {
                     panic!(
@@ -629,10 +633,10 @@ fn compile_to_instrs(
 
                 if i == expr_vec.len() - 1 {
                     ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
-                    return compile_to_instrs(e, ctx, instr_vec, defns);
+                    return compile_to_instrs(e, ctx, instr_vec, program);
                 }
 
-                compile_to_instrs(e, ctx, instr_vec, defns);
+                compile_to_instrs(e, ctx, instr_vec, program);
             }
 
             panic!("Invalid: Empty block expression encountered");
@@ -644,7 +648,7 @@ fn compile_to_instrs(
             // Compile e1 (if condition)
             // Track the old carry forward assignment value, temporarily set to 0 for if condition
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, false);
-            compile_to_instrs(e_condition, ctx, instr_vec, defns);
+            compile_to_instrs(e_condition, ctx, instr_vec, program);
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             let rbp_starting_offset_from_condition = ctx.rbp_offset;
@@ -655,7 +659,7 @@ fn compile_to_instrs(
             instr_vec.push(Instr::IJumpEqual(format!("else{curr_tag_id}")));
 
             // Compile e2 (true branch)
-            let return_type_true_branch = compile_to_instrs(e_true, ctx, instr_vec, defns);
+            let return_type_true_branch = compile_to_instrs(e_true, ctx, instr_vec, program);
             instr_vec.push(Instr::IJump(format!("end{curr_tag_id}")));
 
             // Compile e3 (false branch)
@@ -663,7 +667,7 @@ fn compile_to_instrs(
             ctx.rbx_offset = rbx_starting_offset_from_condition;
 
             instr_vec.push(Instr::ITag(format!("else{curr_tag_id}")));
-            let return_type_false_branch = compile_to_instrs(e_false, ctx, instr_vec, defns);
+            let return_type_false_branch = compile_to_instrs(e_false, ctx, instr_vec, program);
 
             if return_type_true_branch != return_type_false_branch {
                 panic!("Type mismatch in if-else branches, got {return_type_true_branch:?} and {return_type_false_branch:?}");
@@ -680,7 +684,7 @@ fn compile_to_instrs(
             instr_vec.push(Instr::ITag(format!("loop{curr_tag_id}")));
 
             // Compile e1 (loop body)
-            let return_type_loop_body = compile_to_instrs(e1, ctx, instr_vec, defns);
+            let return_type_loop_body = compile_to_instrs(e1, ctx, instr_vec, program);
             let rbp_offset_loop_body_e = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = rbp_offset_loop_body_e;
 
@@ -688,7 +692,7 @@ fn compile_to_instrs(
             // Track the old carry forward assignment value, temporarily set to 0 for loop guard
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, false);
 
-            compile_to_instrs(e2, ctx, instr_vec, defns);
+            compile_to_instrs(e2, ctx, instr_vec, program);
 
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
@@ -710,7 +714,7 @@ fn compile_to_instrs(
             let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
 
             for arg_expr in args {
-                let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, defns);
+                let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
 
                 // Push the evaluated arguments onto the stack in the correct order, using the
                 // following ordering convention:
@@ -750,14 +754,14 @@ fn compile_to_instrs(
             // var y = lookup(x, field)
 
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
-            let e1_type = compile_to_instrs(e1, ctx, instr_vec, defns);
+            let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             let e1_addr_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = e1_addr_offset;
 
             if let ExprType::RecordPointer(record_name) = e1_type {
-                let record_signature = defns.record_signatures.get(&record_name).unwrap();
+                let record_signature = program.record_signatures.get(&record_name).unwrap();
 
                 let field_index = record_signature
                     .field_types
@@ -824,7 +828,7 @@ fn compile_to_instrs(
             ]);
 
             // Call malloc
-            if let Some(record_signature) = defns.record_signatures.get(record_name) {
+            if let Some(record_signature) = program.record_signatures.get(record_name) {
                 // Now allocate space for the record itself
                 let n_bytes = calculate_record_size(record_signature);
 
@@ -872,7 +876,7 @@ fn compile_to_instrs(
                 )));
 
                 for (i, field_expr) in fields.iter().enumerate() {
-                    let field_type_eval = compile_to_instrs(field_expr, ctx, instr_vec, defns);
+                    let field_type_eval = compile_to_instrs(field_expr, ctx, instr_vec, program);
 
                     if field_type_eval != ExprType::RecordNullPtr
                         && field_type_eval != record_signature.field_types[i].1
@@ -916,7 +920,7 @@ fn compile_to_instrs(
                 .clone();
 
             if let ExprType::RecordPointer(record_type) = id_type {
-                let record_signature = defns.record_signatures.get(&record_type).unwrap();
+                let record_signature = program.record_signatures.get(&record_type).unwrap();
 
                 let field_index = record_signature
                     .field_types
@@ -928,7 +932,7 @@ fn compile_to_instrs(
                     ctx.rbx_offset =
                         push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
                     let return_type_field_expr =
-                        compile_to_instrs(field_expr, ctx, instr_vec, defns);
+                        compile_to_instrs(field_expr, ctx, instr_vec, program);
                     ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
                     let rbp_offset_field_expr_eval =
@@ -998,6 +1002,8 @@ fn compile_to_instrs(
                 panic!("Invalid: Variable passed to record set! is not a record type")
             }
         }
+        Expr::ObjectInitializer(_, vec) => todo!(),
+        Expr::CallObjectMethod(expr, _, vec) => todo!(),
     }
 }
 
@@ -1019,7 +1025,7 @@ fn compile_function_to_instrs(
     func: &Function,
     instr_vec: &mut Vec<Instr>,
     ctx: &mut CompileCtx,
-    defns: &ProgDefns,
+    program: &Program,
 ) -> ExprType {
     // Set up the function prologue for our_code_starts_here, we need `stack_space_needed`-many
     // bytes for local variables and expression evaluation, and need `rbx_storage_stack_space_needed`-many
@@ -1050,7 +1056,7 @@ fn compile_function_to_instrs(
     }
 
     // Compile the function body
-    let ret = compile_to_instrs(&func.body, ctx, instr_vec, defns);
+    let ret = compile_to_instrs(&func.body, ctx, instr_vec, program);
 
     // Only try to decrement record arguments if there are any to avoid useless move instruction
     if func
@@ -1088,7 +1094,7 @@ fn compile_main_expr_to_instrs(
     expr: &Box<Expr>,
     instr_vec: &mut Vec<Instr>,
     ctx: &mut CompileCtx,
-    defns: &ProgDefns,
+    program: &Program,
 ) -> ExprType {
     // Set up the function prologue for our_code_starts_here, we need `stack_space_needed`-many
     // bytes for local variables and expression evaluation, and need `rbx_storage_stack_space_needed`-many
@@ -1130,7 +1136,7 @@ fn compile_main_expr_to_instrs(
     ctx.scope
         .insert("input".to_string(), (ctx.rbp_offset, ExprType::Number));
 
-    let ret = compile_to_instrs(expr, ctx, instr_vec, defns);
+    let ret = compile_to_instrs(expr, ctx, instr_vec, program);
 
     // Call print function with final result
     instr_vec.push(Instr::IComment("Print final result".to_string()));
@@ -1167,9 +1173,9 @@ fn compile_main_expr_to_instrs(
 fn compile_record_rc_decr_function_to_instrs(
     instr_vec: &mut Vec<Instr>,
     record_name: &String,
-    defns: &ProgDefns,
+    program: &Program,
 ) {
-    let signature = defns
+    let signature = program
         .record_signatures
         .get(record_name)
         .expect("Record definition not found when trying to compile record rc decr");
@@ -1239,7 +1245,7 @@ fn compile_record_rc_decr_function_to_instrs(
 fn compile_class_vtable(
     class: &Class,
     instr_vec: &mut Vec<Instr>,
-    defns: &ProgDefns,
+    program: &Program,
 ) {
     let mut vtable_indices = vec![
         Instr::IDq("NULL".to_string());
@@ -1254,7 +1260,7 @@ fn compile_class_vtable(
 }
 
 /// Compile a program to a string of x86-64 assembly
-pub fn compile(prog: &Program, defns: &ProgDefns) -> String {
+pub fn compile(program: &Program) -> String {
     // Compile all functions to instruction strings
     let mut asm_string: String = "
 extern snek_print
@@ -1300,9 +1306,9 @@ rc_incr:
     let mut instr_vec: Vec<Instr> = Vec::new();
 
     // Generate assembly for freeing records recursively
-    for record_name in defns.record_signatures.keys() {
+    for record_name in program.record_signatures.keys() {
         instr_vec.clear();
-        compile_record_rc_decr_function_to_instrs(&mut instr_vec, record_name, defns);
+        compile_record_rc_decr_function_to_instrs(&mut instr_vec, record_name, program);
 
         let asm_func_string = format!(
             "
@@ -1316,10 +1322,10 @@ rc_incr:
     }
 
     // Generate assembly for each function body
-    for (func_name, func) in prog.functions.iter() {
+    for (func_name, func) in program.functions.iter() {
         println!("Starting compilation for {}", func_name);
         instr_vec.clear();
-        let eval_return_type = compile_function_to_instrs(func, &mut instr_vec, &mut ctx, defns);
+        let eval_return_type = compile_function_to_instrs(func, &mut instr_vec, &mut ctx, program);
 
         if eval_return_type != func.signature.return_type {
             panic!(
@@ -1342,8 +1348,8 @@ rc_incr:
 
     // Generate assembly for class VTables
     instr_vec.clear();
-    for (class_name, class) in prog.classes.iter() {
-        compile_class_vtable(class, &mut instr_vec, defns);
+    for (class_name, class) in program.classes.iter() {
+        compile_class_vtable(class, &mut instr_vec, program);
 
         let asm_func_string = format!(
             "
@@ -1358,7 +1364,7 @@ rc_incr:
 
     // Generate assembly for the main expression
     instr_vec.clear();
-    let eval_return_type = compile_main_expr_to_instrs(&prog.main_expr, &mut instr_vec, &mut ctx, defns);
+    let eval_return_type = compile_main_expr_to_instrs(&program.main_expr, &mut instr_vec, &mut ctx, program);
     let asm_func_string = format!(
         "
 {}:
