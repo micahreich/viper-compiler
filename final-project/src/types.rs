@@ -48,6 +48,7 @@ pub enum Val {
     Reg(Reg),
     Imm(i32),
     RegOffset(Reg, i32),
+    LabelPointer(String),
 }
 
 #[derive(Debug, Clone)]
@@ -130,9 +131,11 @@ pub enum Expr {
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
     Call(FunctionSignature, Vec<Expr>), // this is for calling non object functions
-    CallObjectMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
+    CallMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
     Lookup(Box<Expr>, String), // recordpointer, fieldname
 }
+
+
 
 #[repr(i32)] // Specify the representation
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -140,8 +143,7 @@ pub enum ExprType {
     Number = 0,
     Boolean = 1,
     RecordPointer(String) = 2,
-    Main = 3,
-    RecordNullPtr = 4,
+    NullPtr = 4,
     ObjectPointer(String) = 5,
 }
 
@@ -151,8 +153,7 @@ impl ExprType {
             ExprType::Number => 0,
             ExprType::Boolean => 1,
             ExprType::RecordPointer(_) => 2,
-            ExprType::Main => 3,
-            ExprType::RecordNullPtr => 4,
+            ExprType::NullPtr => 4,
             ExprType::ObjectPointer(_) => 5,
         }
     }
@@ -170,10 +171,35 @@ impl FromStr for ExprType {
     }
 }
 
+pub trait HeapAllocated {
+    fn name(&self) -> &String;
+    fn field_types(&self) -> &Vec<(String, ExprType)>;
+    fn alloc_size(&self) -> i32;
+    fn field_idx_start(&self) -> i32;
+}
+
 #[derive(Debug, Clone)]
 pub struct RecordSignature {
     pub name: String,
     pub field_types: Vec<(String, ExprType)>,
+}
+
+impl HeapAllocated for RecordSignature {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    
+    fn field_types(&self) -> &Vec<(String, ExprType)> {
+        &self.field_types
+    }
+
+    fn alloc_size(&self) -> i32 {
+        (self.field_types.len() + 1) as i32 * SIZE_OF_DWORD
+    }
+
+    fn field_idx_start(&self) -> i32 {
+        1
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +210,24 @@ pub struct ClassSignature {
     pub method_signatures: HashMap<String, FunctionSignature>,
     /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
     pub vtable_indices: HashMap<String, (usize, String)>
+}
+
+impl HeapAllocated for ClassSignature {
+    fn name(&self) -> &String {
+        &self.name
+    }
+    
+    fn field_types(&self) -> &Vec<(String, ExprType)> {
+        &self.field_types
+    }
+
+    fn alloc_size(&self) -> i32 {
+        (self.field_types.len() + 2) as i32 * SIZE_OF_DWORD
+    }
+
+    fn field_idx_start(&self) -> i32 {
+        2
+    }
 }
 
 #[derive(Debug, Clone, Hash)]
@@ -216,6 +260,43 @@ pub struct Program {
     pub classes: HashMap<String, Class>,
     pub record_signatures: HashMap<String, RecordSignature>,
     pub main_expr: Box<Expr>,
+    pub inheritance_graph: HashMap<String, Vec<String>>,
+}
+
+impl Program {
+    fn class_a_inherits_from_b(
+        &self,
+        class_a: &String,
+        class_b: &String,
+        inheritance_graph: &HashMap<String, Vec<String>>,
+    ) -> bool {
+        if class_a == class_b {
+            return true;
+        } else {
+            let child_classes = inheritance_graph.get(class_b)
+                .expect("Class {class_b} not found in inheritance graph");
+            
+            for child_class in child_classes {
+                if self.class_a_inherits_from_b(class_a, child_class, inheritance_graph) {
+                    return true;
+                }
+            }
+        }
+    
+        false
+    }
+
+    pub fn expr_a_subtypes_b(&self, a: &ExprType, b: &ExprType) -> bool {
+        match (a, b) {
+            (ExprType::NullPtr, ExprType::RecordPointer(_)) => true,
+            (ExprType::NullPtr, ExprType::ObjectPointer(_)) => true,
+            (ExprType::RecordPointer(e), ExprType::RecordPointer(t)) => e == t,
+            (ExprType::ObjectPointer(class_a), ExprType::ObjectPointer(class_b)) => {
+                self.class_a_inherits_from_b(&class_a, &class_b, &self.inheritance_graph)
+            }
+            _ => a == b,
+        }
+    }
 }
 
 pub struct CompileCtx {

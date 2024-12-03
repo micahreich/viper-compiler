@@ -1,4 +1,5 @@
 use core::panic;
+use std::char;
 use im::{HashMap, HashSet};
 // use prettydiff::format_table::new;
 use sexp::Atom::*;
@@ -149,7 +150,7 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                             args.push(parse_expr(&vec[i], ctx));
                         }
     
-                        Expr::CallObjectMethod(Box::new(parse_expr(&vec[0], ctx)), func_name, args)
+                        Expr::CallMethod(Box::new(parse_expr(&vec[0], ctx)), func_name, args)
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
@@ -204,9 +205,8 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
 
                         Expr::ObjectInitializer(name.clone(), args)
                     } else {
-                        println!("{:?}", vec);
                         panic!(
-                            "Invalid program: function call or record initialization to undefined: {}",
+                            "Invalid program: function call, record initialization, or class initialization for undefined name: {}",
                             name
                         );
                     }
@@ -325,12 +325,20 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
 
             if let Sexp::List(arg_vec) = &vec[4] {
                 for s1 in arg_vec {
-                    let parsed_func_signature = parse_func_signature(s1);
+                    let mut parsed_method_signature = parse_func_signature(s1);
+                    let method_name = parsed_method_signature.name.clone();
+
+                    // Add the implicit `self` first argument to the signature
+                    parsed_method_signature.arg_types.insert(0,("self".to_string(), ExprType::ObjectPointer(class_name.clone())));
+
+                    // Add the class name prefix to the name part of the signature
+                    parsed_method_signature.name = format!("__{}_{}", class_name, method_name);
+
                     if method_signatures.insert(
-                        parsed_func_signature.name.clone(),
-                        parsed_func_signature.clone(),
+                        method_name.clone(),
+                        parsed_method_signature,
                     ).is_some() {
-                        panic!("Duplicate method definition: {} in class {class_name}", parsed_func_signature.name);
+                        panic!("Duplicate method definition: {method_name} in class {class_name}");
                     }
                 }
             } else {
@@ -393,9 +401,6 @@ pub fn parse_func_defn(
     ctx: &ProgDefns,
     fn_signatures: &HashMap<String, FunctionSignature>
 ) -> Function {
-    // Right now this function only works for pasing functions, will need to update
-    // if defintions ever contain more than functions
-
     match s {
         Sexp::List(sub_vec) => {
             let func_name = match &sub_vec[1] {
@@ -468,28 +473,26 @@ pub fn parse_class_methods(s: &Sexp, ctx: &ProgDefns) -> Class {
                         );
                     }
 
-                    Class {
+                    return Class {
                         signature: ctx
                             .class_signatures
                             .get(class_name)
                             .expect("Class signature not found")
                             .clone(),
                         methods: class_methods,
-                    }
+                    };
                 }
                 _ => panic!("Malformed class definition"),
             };
         }
         _ => panic!("Malformed program"),
     }
-
-    panic!("Malformed program");
 }
 
 pub fn create_inheritance_graph(class_signatures: &HashMap<String, ClassSignature>) -> HashMap<String, Vec<String>> {
     let mut inheritance_graph: HashMap<String, Vec<String>> = HashMap::new();
 
-    for (class_name, class_signature) in class_signatures {
+    for class_signature in class_signatures.values() {
         if !inheritance_graph.contains_key(&class_signature.inherits) {
             inheritance_graph.insert(class_signature.inherits.clone(), Vec::new());
         }
@@ -512,13 +515,18 @@ pub fn resolve_vtable_indices(
     // Clone :( the class names so that no borrowing occurs of class_signatures
     let class_names: Vec<String> = class_signatures.keys().cloned().collect();
 
-    for class in class_names {
+    for class in class_names.iter() {
         resolve_vtable_indices_by_class(
             &class,
             &mut vtable_visited,
             inheritance_graph,
             class_signatures,
         );
+    }
+
+    for class in class_names.iter() {
+        let signature = class_signatures.get(class).unwrap();
+        println!("Vtable indices for class {}: {:?}", class, signature.vtable_indices);
     }
 }
 
@@ -566,7 +574,7 @@ fn resolve_vtable_indices_by_class (
      *  (note this won't really work for multiple inheritance which we don't support)
      * - Each new function is mapped sequentially to a new index in the vtable
      */
-    for (method_name, method) in &class_signature.method_signatures {
+    for method_name in class_signature.method_signatures.keys() {
         if new_vtable_indices.contains_key(method_name) {
             // We are overriding a function!
             let curr_value = new_vtable_indices.get(method_name).unwrap();
@@ -655,6 +663,9 @@ pub fn parse_prog(s: &Sexp) -> Program {
     // This step will populate each class's vtable map, which
     // stores an index for each method that it defines and inherits
     let inheritance_graph = create_inheritance_graph(&class_signatures);
+
+    println!("inheritance_graph: {:?}", inheritance_graph);
+
     resolve_vtable_indices(&mut class_signatures, &inheritance_graph);
 
     // Build up program with parsed function bodies, class method bodies
@@ -703,5 +714,6 @@ pub fn parse_prog(s: &Sexp) -> Program {
         // Only need signatures here since records don't have anything to compile
         record_signatures: parse_ctx.record_signatures,
         main_expr: main_expr.expect("Main expression not found"),
+        inheritance_graph: inheritance_graph,
     }
 }
