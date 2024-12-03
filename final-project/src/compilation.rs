@@ -1202,7 +1202,7 @@ fn compile_main_expr_to_instrs(
 /// Write the assembly code for a record's reference count decrement function, which decrements the reference count
 /// and if the reference count hits 0, frees the memory of the record and decrements the reference count of any
 /// record pointers/fields in the record
-fn compile_record_rc_decr_function_to_instrs(
+fn compile_heap_rc_decr_function_to_instrs(
     e: &dyn HeapAllocated,
     instr_vec: &mut Vec<Instr>,
 ) {
@@ -1223,26 +1223,26 @@ fn compile_record_rc_decr_function_to_instrs(
         Instr::IJumpNotEqual(format!("{}_record_rc_decr_end", e.name())),
     ]);
 
-    for (i, (_, field_type)) in e.field_types().iter().enumerate() {
-        if !matches!(field_type, ExprType::RecordPointer(_) | ExprType::ObjectPointer(_)) {
-            continue;
+    for (i, (field_name, field_type)) in e.field_types().iter().enumerate() {       
+        match field_type {
+            ExprType::RecordPointer(type_name) | ExprType::ObjectPointer(type_name) => {
+                instr_vec.push(Instr::IComment(format!("Decrement refcount of field {field_name}")));
+                instr_vec.extend(vec![
+                    // Load the address of the record struct into R11
+                    Instr::IMov(
+                        Val::Reg(Reg::R11),
+                        Val::RegOffset(Reg::RBP, record_addr_offset),
+                    ),
+                    // Load the address of the field's pointer into RDI
+                    Instr::IMov(
+                        Val::Reg(Reg::RDI),
+                        Val::RegOffset(Reg::R11, ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD),
+                    ),
+                    Instr::ICall(format!("{type_name}_record_rc_decr")),
+                ]);
+            }
+            _ => continue,
         }
-
-        // If the field is a pointer, we need to decrement the reference count of the field
-        // and free the memory if the refcount is 0 recursively
-        instr_vec.extend(vec![
-            // Load the address of the record struct into R11
-            Instr::IMov(
-                Val::Reg(Reg::R11),
-                Val::RegOffset(Reg::RBP, record_addr_offset),
-            ),
-            // Load the address of the field's pointer into RDI
-            Instr::IMov(
-                Val::Reg(Reg::RDI),
-                Val::RegOffset(Reg::R11, ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD),
-            ),
-            Instr::ICall(format!("{}_record_rc_decr", e.name())),
-        ]);
         
         // if let ExprType::RecordPointer(field_record_type) = field_type {
         //     // If the field is a record pointer, we need to decrement the reference count of the field
@@ -1360,7 +1360,7 @@ rc_incr:
     for signature in heap_allocated_signatures {
         let name = signature.name();
         instr_vec.clear();
-        compile_record_rc_decr_function_to_instrs(signature, &mut instr_vec);
+        compile_heap_rc_decr_function_to_instrs(signature, &mut instr_vec);
 
         let asm_func_string = format!(
             "
