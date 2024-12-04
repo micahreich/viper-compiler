@@ -138,7 +138,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
         Expr::RecordInitializer(_, fields) => fields
             .iter()
             .fold(SIZE_OF_DWORD, |acc, e| acc + stack_space_needed(e)),
-        Expr::RecordSetField(_, _, expr) => stack_space_needed(expr) + 1 * SIZE_OF_DWORD,
+        Expr::SetField(_, _, expr) => stack_space_needed(expr) + 1 * SIZE_OF_DWORD,
         Expr::ObjectInitializer(_, fields) => fields
             .iter()
             .fold(SIZE_OF_DWORD, |acc, e| acc + stack_space_needed(e)),
@@ -1124,13 +1124,13 @@ fn compile_to_instrs(
                 let formatted_method_name = format!("__{}_{}", class_name, method_name);
                 let method_signature = class_signature.methods.get(&formatted_method_name).expect("Method definition not found");
                 // VTable_idx stores: (index, class it came from (in the case of inheritance))
-                let vtable_idx = class_signature.signature.vtable_indices.get(method_name).expect("Method definition not found in vtable");
+                let vtable_idx = class_signature.vtable_indices.get(method_name).expect("Method definition not found in vtable");
 
-                if args_vec.len() + 1 < method_signature.signature.arg_types.len() {
+                if args_vec.len() + 1 < method_signature.arg_types.len() {
                     panic!("Too few arguments when calling function: {}", method_name)
                 }
 
-                if args_vec.len() + 1 > method_signature.signature.arg_types.len() {
+                if args_vec.len() + 1 > method_signature.arg_types.len() {
                     panic!("Too many arguments when calling function: {}", method_name)
                 }
 
@@ -1138,12 +1138,12 @@ fn compile_to_instrs(
 
                 let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
 
-                for i in 1..method_signature.signature.arg_types.len() {
+                for i in 1..method_signature.arg_types.len() {
                     let arg_expr = &args_vec[i];
                     
 
                     let arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
-                    let expected_arg_type = &method_signature.signature.arg_types[i].1;
+                    let expected_arg_type = &method_signature.arg_types[i].1;
 
                     if arg_type != *expected_arg_type {
                         panic!("Argument {} to {} has the wrong type", i, method_name);
@@ -1183,7 +1183,7 @@ fn compile_to_instrs(
                 // Call the function
                 instr_vec.push(Instr::ICall("r11".to_string()));
 
-                method_signature.signature.return_type.clone()
+                method_signature.return_type.clone()
 
             } else {
                 panic!("Cannot call method on non-object");
