@@ -226,7 +226,10 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
 fn instr_to_str(i: &Instr) -> String {
     match i {
         Instr::IMov(dst, src) => {
-            let size_specifier = if let Val::Imm(_) = src { "qword " } else { "" };
+            let mut size_specifier = "";
+            if matches!(src, Val::Imm(_)) || matches!(src, Val::LabelPointer(_)) {
+                size_specifier = "qword ";
+            }
             format!(
                 "mov {size_specifier}{}, {}",
                 val_to_str(dst),
@@ -1067,7 +1070,8 @@ fn compile_to_instrs(
                 let class_signature = program.classes.get(&class_name).expect("Class definition not found");
                 println!("{}", method_name);
                 println!("{:?}", class_signature.methods.keys().collect::<Vec<&String>>());
-                let method_signature = class_signature.methods.get(method_name).expect("Method definition not found");
+                let formatted_method_name = format!("__{}_{}", class_name, method_name);
+                let method_signature = class_signature.methods.get(&formatted_method_name).expect("Method definition not found");
                 // VTable_idx stores: (index, class it came from (in the case of inheritance))
                 let vtable_idx = class_signature.signature.vtable_indices.get(method_name).expect("Method definition not found in vtable");
 
