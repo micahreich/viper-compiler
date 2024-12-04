@@ -1125,7 +1125,7 @@ fn compile_to_instrs(
                 }
 
                 // Grab method from vtable
-                instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::LabelPointer(format!("[{}_VTable+{}]", class_name, vtable_idx.0))));
+                instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::LabelPointer(format!("[{}_VTable+{}]", class_name, (vtable_idx.0 as i32) * SIZE_OF_DWORD))));
 
                 ctx.rbp_offset = rbp_offset_pre_arg_eval;
 
