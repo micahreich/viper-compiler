@@ -1156,10 +1156,22 @@ fn compile_to_instrs(
             if let ExprType::ObjectPointer(class_name) = obj_arg_type {
                 let class_signature = program.classes.get(&class_name).expect("Class definition not found");
                 println!("{}", method_name);
-                println!("{:?}", class_signature.methods.keys().collect::<Vec<&String>>());
-                let method_signature = class_signature.methods.get(method_name).expect("Method definition not found");
-                // VTable_idx stores: (index, class it came from (in the case of inheritance))
+                println!("{:?}", class_signature.vtable_indices.keys().collect::<Vec<&String>>());
                 let vtable_idx = class_signature.vtable_indices.get(method_name).expect("Method definition not found in vtable");
+
+                // Search for method in either current or inherited class
+                let method_signature: &Function;
+                if vtable_idx.1 == class_name {
+                    method_signature = class_signature.methods.get(method_name).expect("Method definition not found");
+                } else {
+                    method_signature = program.classes
+                        .get(&vtable_idx.1)
+                        .expect("Class definition not found")
+                        .methods
+                        .get(method_name)
+                        .expect("Method definition not found");
+                }
+                // VTable_idx stores: (index, class it came from (in the case of inheritance))
 
                 if args_vec.len() + 1 < method_signature.arg_types.len() {
                     panic!("Too few arguments when calling function: {}", method_name)

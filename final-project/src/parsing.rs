@@ -599,6 +599,7 @@ fn flatten_single_class (
         let old_fields: Vec<(String, ExprType)> = current_class.field_types.clone();
         current_class.field_types = parent_class_field_types;
         current_class.field_types.extend(old_fields);
+
     }
 
 
@@ -624,6 +625,7 @@ fn flatten_single_class (
     //     .get_mut(current_class_name)
     //     .expect("Class not found")
     //     .vtable_indices;
+
 
     for method_name in current_class.methods.keys() {
         // let existing_vtable_entry = classes_map

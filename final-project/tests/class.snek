@@ -2,7 +2,7 @@
     ((miles_driven int))
     (
         (fun honk () bool
-            (true)
+            (false)
         )
     )   
 
@@ -23,7 +23,7 @@
 (let
     ((tesla (Car 1200 4)))
     (block
-        (call tesla beep)
+        (call tesla honk)
     )
 
 )
