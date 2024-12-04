@@ -66,11 +66,11 @@ fn push_rbx_and_set_carry_forward(instr_vec: &mut Vec<Instr>, rbx_offset: i32, v
     new_rbx_offset
 }
 
-/// Calculate the size of a record in bytes
-fn calculate_record_size(signature: &RecordSignature) -> i32 {
-    i32::try_from((signature.field_types.len() + 1) * SIZE_OF_DWORD as usize)
-        .expect("Record size (+1) in bytes exceeds i32 max value")
-}
+// /// Calculate the size of a record in bytes
+// fn calculate_record_size(signature: &Record) -> i32 {
+//     i32::try_from((signature.field_types.len() + 1) * SIZE_OF_DWORD as usize)
+//         .expect("Record size (+1) in bytes exceeds i32 max value")
+// }
 
 /// Round a positive integer up to the next multiple of 16
 fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
@@ -138,7 +138,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
         Expr::RecordInitializer(_, fields) => fields
             .iter()
             .fold(SIZE_OF_DWORD, |acc, e| acc + stack_space_needed(e)),
-        Expr::RecordSetField(_, _, expr) => stack_space_needed(expr) + 1 * SIZE_OF_DWORD,
+        Expr::SetField(_, _, expr) => stack_space_needed(expr) + 1 * SIZE_OF_DWORD,
         Expr::ObjectInitializer(_, vec) => todo!(),
         Expr::CallMethod(expr, _, vec) => todo!(),
     }
@@ -180,7 +180,7 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
             SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr_guard),
         ),
         Expr::Set(_, expr) => SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr),
-        Expr::RecordSetField(_, _, expr) => SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr),
+        Expr::SetField(_, _, expr) => SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr),
         Expr::Block(expr_vec) => {
             let space_needed_for_block = expr_vec.iter().fold(0, |acc, e| {
                 std::cmp::max(acc, rbx_storage_stack_space_needed(e))
@@ -376,6 +376,94 @@ fn compile_heap_allocated_initializer<T: HeapAllocated>(
     instr_vec.push(Instr::ITag(heap_initialize_end_tag));
 }
 
+fn compile_heap_allocated_set_field<T: HeapAllocated>(
+    e: &T,
+    (id_offset, id_type): (i32, ExprType),
+    field_name: &String,
+    field_expr: &Expr,
+    ctx: &mut CompileCtx,
+    instr_vec: &mut Vec<Instr>,
+    program: &Program,
+) -> ExprType {
+    let field_types = e.field_types();
+    let field_index = field_types
+        .iter()
+        .position(|(field, _)| field == field_name);
+
+    if let Some(idx) = field_index {
+        // Evalulate the new field expression
+        ctx.rbx_offset =
+        push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
+        let return_type_field_expr = compile_to_instrs(field_expr, ctx, instr_vec, program);
+        ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
+
+        let rbp_offset_field_expr_eval =
+            push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+        ctx.rbp_offset = rbp_offset_field_expr_eval;
+
+        let expected_return_type_field_expr = field_types[idx].1.clone();
+        if return_type_field_expr != expected_return_type_field_expr {
+            panic!("Invalid: set! on record for field does not match record signature,
+                    expected: {expected_return_type_field_expr:?} but got: {return_type_field_expr:?}");
+        }
+
+        // Check if we're re-assigning to a RecordPointer field; if so, we must decrement the
+        // refcount of the old field. We also need to check the carry forward flag to see if this set!
+        // expression is being assigned to another variable
+
+        if expected_return_type_field_expr.is_heap_allocated() {
+            // Call rc_incr if we're doing something like var x = set! record_name field my_record(...) since
+            // the set! expression DOES return the new field's value
+            instr_vec.extend(vec![
+                Instr::IMov(
+                    Val::Reg(Reg::RDI),
+                    Val::RegOffset(Reg::RBP, rbp_offset_field_expr_eval),
+                ),
+                Instr::ICall("rc_incr".to_string()),
+            ]);
+            
+            let field_heap_allocated_type = expected_return_type_field_expr.extract_heap_allocated_type_name();
+
+            // Decrement the reference count of the old value which was in this field
+            instr_vec.extend(vec![
+                Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, id_offset)),
+                Instr::IMov(
+                    Val::Reg(Reg::RDI),
+                    Val::RegOffset(
+                        Reg::R11,
+                        ((idx as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
+                    ),
+                ),
+                Instr::ICall(format!("{}_record_rc_decr", field_heap_allocated_type)),
+            ]);
+        }
+
+        // Put the new field value in place in memory
+        instr_vec.extend(vec![
+            Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, id_offset)),
+            Instr::IMov(
+                Val::Reg(Reg::RAX),
+                Val::RegOffset(Reg::RBP, rbp_offset_field_expr_eval),
+            ),
+            // Load the evaluated new field expression into memory at the field's location
+            Instr::IMov(
+                Val::RegOffset(
+                    Reg::R11,
+                    ((idx as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
+                ),
+                Val::Reg(Reg::RAX),
+            ),
+        ]);
+
+        expected_return_type_field_expr
+    } else {
+        panic!(
+            "Invalid field lookup: field {field_name} not found in heap-allocated type {}",
+            e.name()
+        );
+    }
+}
+
 /// Compile an expression to a vector of x86-64 assembly instructions
 fn compile_to_instrs(
     e: &Expr,
@@ -403,7 +491,7 @@ fn compile_to_instrs(
                 ));
 
                 // Check carry forward assignment for refcnt pointers, increment refcnt by 1
-                if let ExprType::RecordPointer(_) = e_type {
+                if e_type.is_heap_allocated() {
                     instr_vec.extend(vec![
                         Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)),
                         Instr::ICall("rc_incr".to_string()),
@@ -431,7 +519,7 @@ fn compile_to_instrs(
                         ctx.rbp_offset = e_rbp_offset;
 
                         let record_def = program
-                            .record_signatures
+                            .records
                             .get(name)
                             .expect("Record definition not found");
 
@@ -514,22 +602,11 @@ fn compile_to_instrs(
             let e1_type = compile_to_instrs(e1, ctx, instr_vec, program); // e1 is in rax
 
             match op {
-                Op2::Equal => match (e1_type, e2_type) {
-                    (ExprType::RecordPointer(name1), ExprType::RecordPointer(name2)) => {
-                        if name1 != name2 {
-                            panic!(
-                                "Type mismatch in equality comparison: cannot compare records of type {name1:?} and {name2:?}",
-                            );
-                        }
-                    }
-                    (ExprType::RecordPointer(_), ExprType::NullPtr) => {}
-                    (ExprType::NullPtr, ExprType::RecordPointer(_)) => {}
-                    (t1, t2) => {
-                        if t1 != t2 {
-                            panic!(
-                                "Type mismatch in equality comparison: cannot compare expressions of type {t1:?} and {t2:?}",
-                            );
-                        }
+                Op2::Equal => {
+                    if !program.expr_a_subtypes_b(&e1_type, &e2_type) {
+                        panic!(
+                            "Type mismatch in equality comparison, expected {e1_type:?} but got {e2_type:?}"
+                        );
                     }
                 },
                 _ => {
@@ -668,7 +745,9 @@ fn compile_to_instrs(
                 .expect("Variable not found in scope during set expression")
                 .clone();
 
-            if let ExprType::RecordPointer(record_name) = id_type.clone() {
+            if id_type.is_heap_allocated() {
+                let type_name = id_type.extract_heap_allocated_type_name();
+
                 ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
                 let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
                 ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
@@ -685,7 +764,7 @@ fn compile_to_instrs(
                 // Decrement the refcount of what `id` was originally pointing to
                 instr_vec.extend(vec![
                     Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, id_offset)),
-                    Instr::ICall(format!("{}_record_rc_decr", record_name)),
+                    Instr::ICall(format!("{}_record_rc_decr", type_name)),
                 ]);
 
                 // Move the evaluated value of e1 into the place on the stack where `id` is stored
@@ -796,7 +875,15 @@ fn compile_to_instrs(
 
             return_type_loop_body
         }
-        Expr::Call(func_sig, args) => {
+        Expr::Call(func_name, args) => {
+            let func = program.functions.get(func_name).expect("Function {func_name} not found");
+            if args.len() != func.arg_types.len() {
+                panic!(
+                    "Invalid number of arguments for function call {func_name}, expected {} but got {}",
+                    func.arg_types.len(), args.len()
+                );
+            }
+
             // Track the old carry forward assignment value, temporarily set to 1 for arguments
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
             let rbp_offset_pre_arg_eval = ctx.rbp_offset;
@@ -835,9 +922,9 @@ fn compile_to_instrs(
             ctx.rbp_offset = rbp_offset_pre_arg_eval;
 
             // Call the function
-            instr_vec.push(Instr::ICall(func_sig.name.clone()));
+            instr_vec.push(Instr::ICall(func_name.clone()));
 
-            func_sig.return_type.clone()
+            func.return_type.clone()
         }
         Expr::Lookup(e1, field) => {
             // Track the old carry forward assignment value, temporarily set to 1 for field lookup, since
@@ -853,7 +940,7 @@ fn compile_to_instrs(
             ctx.rbp_offset = e1_addr_offset;
 
             if let ExprType::RecordPointer(record_name) = e1_type {
-                let record_signature = program.record_signatures.get(&record_name).unwrap();
+                let record_signature = program.records.get(&record_name).unwrap();
 
                 let field_index = record_signature
                     .field_types
@@ -910,9 +997,16 @@ fn compile_to_instrs(
             )));
 
             let signature = program
-                .record_signatures
+                .records
                 .get(record_name)
                 .expect("Record signature not found");
+
+            if fields.len() != signature.field_types.len() {
+                panic!(
+                    "Invalid number of fields in record initializer for record type {record_name}, expected {} but got {}",
+                    signature.field_types.len(), fields.len()
+                );
+            }
 
             compile_heap_allocated_initializer(signature, fields, ctx, instr_vec, program);
 
@@ -922,94 +1016,45 @@ fn compile_to_instrs(
 
             ExprType::RecordPointer(record_name.clone())
         }
-        Expr::RecordSetField(id, field_name, field_expr) => {
+        Expr::SetField(id, field_name, field_expr) => {
             let (id_offset, id_type) = ctx
                 .scope
                 .get(id)
                 .expect("Variable not found in scope during set expression")
                 .clone();
 
-            if let ExprType::RecordPointer(record_type) = id_type {
-                let record_signature = program.record_signatures.get(&record_type).unwrap();
+            match &id_type {
+                ExprType::RecordPointer(record_name) => {
+                    let record_signature = program.records.get(record_name).unwrap();
+                    
+                    let field_type = compile_heap_allocated_set_field(
+                        record_signature,
+                        (id_offset, id_type),
+                        field_name,
+                        field_expr,
+                        ctx,
+                        instr_vec,
+                        program,
+                    );
 
-                let field_index = record_signature
-                    .field_types
-                    .iter()
-                    .position(|(sig_field_name, _)| sig_field_name == field_name);
+                    field_type
+                },
+                ExprType::ObjectPointer(class_name) => {
+                    let class_signature = program.classes.get(class_name).unwrap();
 
-                if let Some(idx) = field_index {
-                    // Evalulate the new field expression
-                    ctx.rbx_offset =
-                        push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
-                    let return_type_field_expr =
-                        compile_to_instrs(field_expr, ctx, instr_vec, program);
-                    ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
+                    let field_type = compile_heap_allocated_set_field(
+                        class_signature,
+                        (id_offset, id_type),
+                        field_name,
+                        field_expr,
+                        ctx,
+                        instr_vec,
+                        program,
+                    );
 
-                    let rbp_offset_field_expr_eval =
-                        push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                    ctx.rbp_offset = rbp_offset_field_expr_eval;
-
-                    let expected_return_type_field_expr =
-                        record_signature.field_types[idx].1.clone();
-                    if return_type_field_expr != expected_return_type_field_expr {
-                        panic!("Invalid: set! on record for field {field_name} does not match record signature,
-                                expected: {expected_return_type_field_expr:?} but got: {return_type_field_expr:?}");
-                    }
-
-                    // Check if we're re-assigning to a RecordPointer field; if so, we must decrement the
-                    // refcount of the old field. We also need to check the carry forward flag to see if this set!
-                    // expression is being assigned to another variable
-
-                    if let ExprType::RecordPointer(field_record_type) =
-                        expected_return_type_field_expr
-                    {
-                        // Call rc_incr if we're doing something like var x = set! record_name field my_record(...) since
-                        // the set! expression DOES return the new field's value
-                        instr_vec.extend(vec![
-                            Instr::IMov(
-                                Val::Reg(Reg::RDI),
-                                Val::RegOffset(Reg::RBP, rbp_offset_field_expr_eval),
-                            ),
-                            Instr::ICall("rc_incr".to_string()),
-                        ]);
-
-                        // Decrement the reference count of the old value which was in this field
-                        instr_vec.extend(vec![
-                            Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, id_offset)),
-                            Instr::IMov(
-                                Val::Reg(Reg::RDI),
-                                Val::RegOffset(
-                                    Reg::R11,
-                                    i32::try_from(idx + 1).unwrap() * SIZE_OF_DWORD,
-                                ),
-                            ),
-                            Instr::ICall(format!("{}_record_rc_decr", field_record_type)),
-                        ]);
-                    }
-
-                    // Put the new field value in place in memory
-                    instr_vec.extend(vec![
-                        Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, id_offset)),
-                        Instr::IMov(
-                            Val::Reg(Reg::RAX),
-                            Val::RegOffset(Reg::RBP, rbp_offset_field_expr_eval),
-                        ),
-                        // Load the evaluated new field expression into memory at the field's location
-                        Instr::IMov(
-                            Val::RegOffset(
-                                Reg::R11,
-                                i32::try_from(idx + 1).unwrap() * SIZE_OF_DWORD,
-                            ),
-                            Val::Reg(Reg::RAX),
-                        ),
-                    ]);
-
-                    return_type_field_expr
-                } else {
-                    panic!("Invalid: set! on record for field {field_name} not found in record type {record_type}");
+                    field_type
                 }
-            } else {
-                panic!("Invalid: Variable passed to record set! is not a record type")
+                _ => panic!("Invalid: set! with fields on non-heap-allocated type"),
             }
         }
         Expr::ObjectInitializer(class_name, fields) => {
@@ -1017,13 +1062,19 @@ fn compile_to_instrs(
                 "Begin object initialization for object type {class_name}",
             )));
 
-            let signature = &program
+            let class = program
                 .classes
                 .get(class_name)
-                .expect("Record signature not found")
-                .signature;
+                .expect("Record signature not found");
 
-            compile_heap_allocated_initializer(signature, fields, ctx, instr_vec, program);
+            if fields.len() != class.field_types.len() {
+                panic!(
+                    "Invalid number of fields in object initializer for object type {class_name}, expected {} but got {}",
+                    class.field_types.len(), fields.len()
+                );
+            }
+
+            compile_heap_allocated_initializer(class, fields, ctx, instr_vec, program);
 
             // We have to put the VTable pointer in index 1 of the object
             let vtable_ptr_label = format!("{}_VTable", class_name);
@@ -1076,7 +1127,7 @@ fn compile_function_to_instrs(
         total_stack_space_needed_n_bytes,
     )));
 
-    for (i, arg) in func.signature.arg_types.iter().enumerate() {
+    for (i, arg) in func.arg_types.iter().enumerate() {
         let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
         if ctx
             .scope
@@ -1092,7 +1143,6 @@ fn compile_function_to_instrs(
 
     // Only try to decrement record arguments if there are any to avoid useless move instruction
     if func
-        .signature
         .arg_types
         .iter()
         .any(|(_, t)| matches!(t, ExprType::RecordPointer(_)))
@@ -1100,7 +1150,7 @@ fn compile_function_to_instrs(
         let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
         ctx.rbp_offset = rax_offset;
 
-        for (i, arg) in func.signature.arg_types.iter().enumerate() {
+        for (i, arg) in func.arg_types.iter().enumerate() {
             if let ExprType::RecordPointer(record_name) = &arg.1 {
                 // Decrement ref counter
                 let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
@@ -1294,10 +1344,10 @@ fn compile_class_vtable(
 ) {
     let mut vtable_indices = vec![
         Instr::IDq("NULL".to_string());
-        class.signature.vtable_indices.len()
+        class.vtable_indices.len()
     ];
 
-    for (method_name, (vtable_idx, method_owner_class)) in class.signature.vtable_indices.iter() {
+    for (method_name, (vtable_idx, method_owner_class)) in class.vtable_indices.iter() {
         println!("VTable index for method {} in class {}: {}", method_name, method_owner_class, *vtable_idx);
         vtable_indices[*vtable_idx] = Instr::IDq(format!("__{method_owner_class}_{method_name}"));
     }
@@ -1352,10 +1402,12 @@ rc_incr:
     let mut instr_vec: Vec<Instr> = Vec::new();
 
     // Generate assembly for freeing records/objects recursively
-    let class_signatures = program.classes.values().map(|class| &class.signature as &dyn HeapAllocated);
-    let record_signatures = program.record_signatures.values().map(|record| record as &dyn HeapAllocated);
+    let classes = program.classes
+        .values()
+        .map(|c| c as &dyn HeapAllocated);
+    let records = program.records.values().map(|record| record as &dyn HeapAllocated);
 
-    let heap_allocated_signatures = class_signatures.chain(record_signatures);
+    let heap_allocated_signatures = classes.chain(records);
 
     for signature in heap_allocated_signatures {
         let name = signature.name();
@@ -1380,16 +1432,16 @@ rc_incr:
     let funcs = standalone_funcs.chain(class_methods);
 
     for func in funcs {
-        let name = func.signature.name.clone();
+        let name = func.name.clone();
         println!("Starting compilation for {name}");
 
         instr_vec.clear();
         let eval_return_type = compile_function_to_instrs(func, &mut instr_vec, &mut ctx, program);
 
-        if eval_return_type != func.signature.return_type {
+        if eval_return_type != func.return_type {
             panic!(
                 "Return type of function {name} does not match function body, expected: {:?} but got {:?}",
-                func.signature.return_type, eval_return_type
+                func.return_type, eval_return_type
             );
         }
 

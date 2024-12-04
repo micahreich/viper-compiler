@@ -126,11 +126,11 @@ pub enum Expr {
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     RepeatUntil(Box<Expr>, Box<Expr>),
     Set(String, Box<Expr>),
-    RecordSetField(String, String, Box<Expr>),
+    SetField(String, String, Box<Expr>),
     Block(Vec<Expr>),
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
-    Call(FunctionSignature, Vec<Expr>), // this is for calling non object functions
+    Call(String, Vec<Expr>), // this is for calling non object functions
     CallMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
     Lookup(Box<Expr>, String), // recordpointer, fieldname
 }
@@ -157,6 +157,22 @@ impl ExprType {
             ExprType::ObjectPointer(_) => 5,
         }
     }
+
+    pub fn is_heap_allocated(&self) -> bool {
+        match self {
+            ExprType::RecordPointer(_) => true,
+            ExprType::ObjectPointer(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn extract_heap_allocated_type_name(&self) -> String {
+        match self {
+            ExprType::RecordPointer(s) => s.clone(),
+            ExprType::ObjectPointer(s) => s.clone(),
+            _ => panic!("Cannot extract heap allocated type from non heap allocated type"),
+        }
+    }
 }
 
 impl FromStr for ExprType {
@@ -179,12 +195,12 @@ pub trait HeapAllocated {
 }
 
 #[derive(Debug, Clone)]
-pub struct RecordSignature {
+pub struct Record {
     pub name: String,
     pub field_types: Vec<(String, ExprType)>,
 }
 
-impl HeapAllocated for RecordSignature {
+impl HeapAllocated for Record {
     fn name(&self) -> &String {
         &self.name
     }
@@ -207,12 +223,39 @@ pub struct ClassSignature {
     pub name: String,
     pub inherits: String,
     pub field_types: Vec<(String, ExprType)>,
-    pub method_signatures: HashMap<String, FunctionSignature>,
-    /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
-    pub vtable_indices: HashMap<String, (usize, String)>
+    // pub method_signatures: HashMap<String, FunctionSignature>,
+    // /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
+    // pub vtable_indices: HashMap<String, (usize, String)>
 }
 
-impl HeapAllocated for ClassSignature {
+#[derive(Debug, Clone, Hash)]
+pub struct FunctionSignature {
+    pub name: String,
+    pub arg_types: Vec<(String, ExprType)>,
+    pub return_type: ExprType,
+}
+
+#[derive(Clone)]
+pub struct Function {
+    pub name: String,
+    pub arg_types: Vec<(String, ExprType)>,
+    pub return_type: ExprType,
+    pub body: Box<Expr>,
+}
+
+#[derive(Clone)]
+pub struct Class {
+    pub name: String,
+    pub inherits: String,
+    pub field_types: Vec<(String, ExprType)>,
+    /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
+    pub vtable_indices: HashMap<String, (usize, String)>,
+    /// Mapping from method name to method body, where the `name` part of the value is how the full
+    /// method name appears in a vtable as a label in the assembly code
+    pub methods: HashMap<String, Function>,
+}
+
+impl HeapAllocated for Class {
     fn name(&self) -> &String {
         &self.name
     }
@@ -230,35 +273,16 @@ impl HeapAllocated for ClassSignature {
     }
 }
 
-#[derive(Debug, Clone, Hash)]
-pub struct FunctionSignature {
-    pub name: String,
-    pub arg_types: Vec<(String, ExprType)>,
-    pub return_type: ExprType,
-}
-
-#[derive(Clone)]
-pub struct Function {
-    pub signature: FunctionSignature,
-    pub body: Box<Expr>,
-}
-
-#[derive(Clone)]
-pub struct Class {
-    pub signature: ClassSignature,
-    pub methods: HashMap<String, Function>,
-}
-
 pub struct ProgDefns {
-    pub fn_signatures: HashMap<String, FunctionSignature>,
-    pub record_signatures: HashMap<String, RecordSignature>,
-    pub class_signatures: HashMap<String, ClassSignature>
+    pub record_names: HashSet<String>,
+    pub class_names: HashSet<String>,
+    pub function_names: HashSet<String>,
 }
 
 pub struct Program {
     pub functions: HashMap<String, Function>,
     pub classes: HashMap<String, Class>,
-    pub record_signatures: HashMap<String, RecordSignature>,
+    pub records: HashMap<String, Record>,
     pub main_expr: Box<Expr>,
     pub inheritance_graph: HashMap<String, Vec<String>>,
 }
@@ -290,6 +314,8 @@ impl Program {
         match (a, b) {
             (ExprType::NullPtr, ExprType::RecordPointer(_)) => true,
             (ExprType::NullPtr, ExprType::ObjectPointer(_)) => true,
+            (ExprType::RecordPointer(_), ExprType::NullPtr) => true,
+            (ExprType::ObjectPointer(_), ExprType::NullPtr) => true,
             (ExprType::RecordPointer(e), ExprType::RecordPointer(t)) => e == t,
             (ExprType::ObjectPointer(class_a), ExprType::ObjectPointer(class_b)) => {
                 self.class_a_inherits_from_b(&class_a, &class_b, &self.inheritance_graph)
