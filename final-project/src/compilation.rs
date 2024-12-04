@@ -139,8 +139,18 @@ fn stack_space_needed(e: &Expr) -> i32 {
             .iter()
             .fold(SIZE_OF_DWORD, |acc, e| acc + stack_space_needed(e)),
         Expr::RecordSetField(_, _, expr) => stack_space_needed(expr) + 1 * SIZE_OF_DWORD,
-        Expr::ObjectInitializer(_, vec) => todo!(),
-        Expr::CallMethod(expr, _, vec) => todo!(),
+        Expr::ObjectInitializer(_, fields) => fields
+            .iter()
+            .fold(SIZE_OF_DWORD, |acc, e| acc + stack_space_needed(e)),
+        Expr::CallMethod(obj_expr, _, args_vec) => {
+            let args_space = args_vec.iter().fold(0, |acc, e| {
+                acc + (stack_space_needed(e) + 2 * SIZE_OF_DWORD)
+            });
+
+            let obj_space = stack_space_needed(obj_expr);
+
+            args_space + obj_space
+        },
     }
 }
 
@@ -199,8 +209,16 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
             space_needed_for_args + SIZE_OF_DWORD
         }
         Expr::Lookup(expr, _) => rbx_storage_stack_space_needed(expr) + SIZE_OF_DWORD,
-        Expr::ObjectInitializer(_, vec) => todo!(),
-        Expr::CallMethod(expr, _, vec) => todo!(),
+        Expr::ObjectInitializer(_, _) => 0,
+        Expr::CallMethod(obj_expr, _, args_vec) => {
+            let mut space_needed_for_args = args_vec.iter().fold(0, |acc, e| {
+                std::cmp::max(acc, rbx_storage_stack_space_needed(e))
+            });
+
+            space_needed_for_args = std::cmp::max(space_needed_for_args, rbx_storage_stack_space_needed(obj_expr));
+
+            space_needed_for_args + SIZE_OF_DWORD
+        },
     }
 }
 
@@ -1033,9 +1051,90 @@ fn compile_to_instrs(
                 "End object initialization for object type {class_name}",
             )));
 
-            ExprType::RecordPointer(class_name.clone())
+            ExprType::ObjectPointer(class_name.clone())
         }
-        Expr::CallMethod(expr, _, vec) => todo!(),
+        Expr::CallMethod(obj_expr, method_name, args_vec) => {
+            // arg 1 is the class we are calling on, arg 2 is the func name, arg 3 is args
+            
+            // Track the old carry forward assignment value, temporarily set to 1 for arguments
+            ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
+            let rbp_offset_pre_arg_eval = ctx.rbp_offset;
+
+            // Compile first argument and ensure it points to an object
+            let obj_arg_type = compile_to_instrs(obj_expr, ctx, instr_vec, program);
+
+            if let ExprType::ObjectPointer(class_name) = obj_arg_type {
+                let class_signature = program.classes.get(&class_name).expect("Class definition not found");
+                println!("{}", method_name);
+                println!("{:?}", class_signature.methods.keys().collect::<Vec<&String>>());
+                let method_signature = class_signature.methods.get(method_name).expect("Method definition not found");
+                // VTable_idx stores: (index, class it came from (in the case of inheritance))
+                let vtable_idx = class_signature.signature.vtable_indices.get(method_name).expect("Method definition not found in vtable");
+
+                if args_vec.len() + 1 < method_signature.signature.arg_types.len() {
+                    panic!("Too few arguments when calling function: {}", method_name)
+                }
+
+                if args_vec.len() + 1 > method_signature.signature.arg_types.len() {
+                    panic!("Too many arguments when calling function: {}", method_name)
+                }
+
+                // Pass in self as the first argument
+
+                let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
+
+                for i in 1..method_signature.signature.arg_types.len() {
+                    let arg_expr = &args_vec[i];
+                    
+
+                    let arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
+                    let expected_arg_type = &method_signature.signature.arg_types[i].1;
+
+                    if arg_type != *expected_arg_type {
+                        panic!("Argument {} to {} has the wrong type", i, method_name);
+                    }
+
+                    // Push the evaluated arguments onto the stack in the correct order, using the
+                    // following ordering convention:
+                    // [arg 4] 0x20
+                    // [arg 3] 0x18
+                    // [arg 2] 0x10
+                    // [arg 1] 0x08 <- $rsp
+
+                    let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                    ctx.rbp_offset = arg_i_rbp_offset;
+
+                    arg_evaluation_offsets.push(arg_i_rbp_offset);
+                }
+
+                ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
+
+                for (i, offset) in arg_evaluation_offsets.iter().enumerate() {
+                    instr_vec.extend(vec![
+                        // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
+                        Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, *offset)),
+                        Instr::IMov(
+                            Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
+                            Val::Reg(Reg::R11),
+                        ),
+                    ]);
+                }
+
+                // Grab method from vtable
+                instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::LabelPointer(format!("[{}_VTable+{}]", class_name, vtable_idx.0))));
+
+                ctx.rbp_offset = rbp_offset_pre_arg_eval;
+
+                // Call the function
+                instr_vec.push(Instr::ICall("r11".to_string()));
+
+                method_signature.signature.return_type.clone()
+
+            } else {
+                panic!("Cannot call method on non-object");
+            }
+
+        },
     }
 }
 
@@ -1404,6 +1503,7 @@ rc_incr:
         asm_string.push_str(&asm_func_string);
         println!("Finished compilation for {name}");
     }
+
 
     // Generate assembly for class VTables
     for (class_name, class) in program.classes.iter() {

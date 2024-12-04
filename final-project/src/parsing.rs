@@ -138,7 +138,7 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                 Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
                 Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
                 Sexp::Atom(S(val)) if val == "call" => {
-                    if let Expr::Id(func_name) = parse_expr(&vec[1], ctx) {
+                    if let Expr::Id(func_name) = parse_expr(&vec[2], ctx) {
                         let mut args: Vec<Expr> = Vec::new();
                         // call obj_name method_name arg1 arg2 arg3...
 
@@ -150,7 +150,7 @@ pub fn parse_expr(s: &Sexp, ctx: &ProgDefns) -> Expr {
                             args.push(parse_expr(&vec[i], ctx));
                         }
     
-                        Expr::CallMethod(Box::new(parse_expr(&vec[0], ctx)), func_name, args)
+                        Expr::CallMethod(Box::new(parse_expr(&vec[1], ctx)), func_name, args)
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
@@ -327,6 +327,8 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
                 for s1 in arg_vec {
                     let mut parsed_method_signature = parse_func_signature(s1);
                     let method_name = parsed_method_signature.name.clone();
+                    println!("FOUND METHOD SIG: {}", method_name);
+
 
                     // Add the implicit `self` first argument to the signature
                     parsed_method_signature.arg_types.insert(0,("self".to_string(), ExprType::ObjectPointer(class_name.clone())));
@@ -344,6 +346,7 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
             } else {
                 panic!("Malformed definition: expecting argument list after method name");
             }
+            
 
             ClassSignature {
                 name: class_name.clone(),
@@ -467,9 +470,10 @@ pub fn parse_class_methods(s: &Sexp, ctx: &ProgDefns) -> Class {
                         .expect("Class signature not found");
 
                     for s1 in func_vec {
+                        let parsed_func = parse_func_defn(s1, ctx, &class_signature.method_signatures);
                         class_methods.insert(
-                            class_signature.name.clone(),
-                            parse_func_defn(s1, ctx, &class_signature.method_signatures)
+                            parsed_func.signature.name.clone(),
+                            parsed_func
                         );
                     }
 

@@ -131,7 +131,7 @@ pub enum Expr {
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
     Call(FunctionSignature, Vec<Expr>), // this is for calling non object functions
-    CallMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
+    CallMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods, arg 1 is the class we are calling on, arg 2 is the func name, arg 3 is args
     Lookup(Box<Expr>, String), // recordpointer, fieldname
 }
 
