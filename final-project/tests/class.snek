@@ -1,5 +1,5 @@
 (class Vehicle Object 
-    ((make string))
+    ((miles_driven int))
     (
         (fun honk () bool
             (true)
@@ -9,7 +9,7 @@
 )
 
 (class Car Vehicle
-    ((model string))
+    ((tires int))
     (
         (fun beep () bool
             (true)
@@ -18,7 +18,7 @@
 )
 
 (let
-    ((tesla (Car "model x")))
+    ((tesla (Car 4)))
     (block
         (call tesla beep)
     )
