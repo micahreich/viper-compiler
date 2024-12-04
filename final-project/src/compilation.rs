@@ -485,6 +485,79 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
     }
 }
 
+fn compile_heap_allocated_print(
+    fields: &Vec<(String, ExprType)>,
+    instr_vec: &mut Vec<Instr>,
+    value_offset: usize // offset from start of memory addr that fields start (offset due to ref count / vtable)
+) {
+    // Print open parens
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)));
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
+
+    instr_vec.push(Instr::ICall("snek_print".to_string()));
+
+    for (i, field_expr) in fields.iter().enumerate() {
+        instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RDI),
+            Val::RegOffset(
+                Reg::R10,
+                i32::try_from(i + value_offset).unwrap() * SIZE_OF_DWORD,
+            ),
+        ));
+        instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RSI),
+            Val::Imm(field_expr.1.to_type_flag()),
+        ));
+
+        instr_vec.push(Instr::ICall("snek_print".to_string()));
+    }
+
+    // // print closed parens
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)));
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
+
+    instr_vec.push(Instr::ICall("snek_print".to_string()));
+}
+
+fn compile_function_arguments(
+    args: &Vec<Expr>,
+    ctx: &mut CompileCtx,
+    instr_vec: &mut Vec<Instr>,
+    program: &Program,
+) {
+    let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
+
+    for arg_expr in args {
+        let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
+
+        // Push the evaluated arguments onto the stack in the correct order, using the
+        // following ordering convention:
+        // [arg 4] 0x20
+        // [arg 3] 0x18
+        // [arg 2] 0x10
+        // [arg 1] 0x08 <- $rsp
+
+        let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+        ctx.rbp_offset = arg_i_rbp_offset;
+
+        arg_evaluation_offsets.push(arg_i_rbp_offset);
+    }
+
+    ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
+
+    for (i, offset) in arg_evaluation_offsets.iter().enumerate() {
+        instr_vec.extend(vec![
+            // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
+            Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, *offset)),
+            Instr::IMov(
+                Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
+                Val::Reg(Reg::R11),
+            ),
+        ]);
+    }
+}
+
+
 /// Compile an expression to a vector of x86-64 assembly instructions
 fn compile_to_instrs(
     e: &Expr,
@@ -546,33 +619,25 @@ fn compile_to_instrs(
 
                         instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
 
-                        // Print open parens
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)));
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
+                        compile_heap_allocated_print(&record_def.field_types, instr_vec, 1);
 
-                        instr_vec.push(Instr::ICall("snek_print".to_string()));
+                        // // Print statements should evaluate to the given value
+                        instr_vec.push(Instr::IMov(
+                            Val::Reg(Reg::RAX),
+                            Val::RegOffset(Reg::RBP, e_rbp_offset),
+                        ));
+                    } else if let ExprType::ObjectPointer(name) = &e_type {
+                        let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                        ctx.rbp_offset = e_rbp_offset;
 
-                        for (i, field_expr) in record_def.field_types.iter().enumerate() {
-                            instr_vec.push(Instr::IMov(
-                                Val::Reg(Reg::RDI),
-                                Val::RegOffset(
-                                    Reg::R10,
-                                    i32::try_from(i + 1).unwrap() * SIZE_OF_DWORD,
-                                ),
-                            ));
-                            instr_vec.push(Instr::IMov(
-                                Val::Reg(Reg::RSI),
-                                Val::Imm(field_expr.1.to_type_flag()),
-                            ));
+                        let class_def = program
+                            .classes
+                            .get(name)
+                            .expect("Record definition not found");
 
-                            instr_vec.push(Instr::ICall("snek_print".to_string()));
-                        }
+                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
 
-                        // // print closed parens
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)));
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
-
-                        instr_vec.push(Instr::ICall("snek_print".to_string()));
+                        compile_heap_allocated_print(&class_def.field_types, instr_vec, 2);
 
                         // // Print statements should evaluate to the given value
                         instr_vec.push(Instr::IMov(
@@ -909,36 +974,7 @@ fn compile_to_instrs(
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
             let rbp_offset_pre_arg_eval = ctx.rbp_offset;
 
-            let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
-
-            for arg_expr in args {
-                let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
-
-                // Push the evaluated arguments onto the stack in the correct order, using the
-                // following ordering convention:
-                // [arg 4] 0x20
-                // [arg 3] 0x18
-                // [arg 2] 0x10
-                // [arg 1] 0x08 <- $rsp
-
-                let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                ctx.rbp_offset = arg_i_rbp_offset;
-
-                arg_evaluation_offsets.push(arg_i_rbp_offset);
-            }
-
-            ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
-
-            for (i, offset) in arg_evaluation_offsets.iter().enumerate() {
-                instr_vec.extend(vec![
-                    // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
-                    Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, *offset)),
-                    Instr::IMov(
-                        Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
-                        Val::Reg(Reg::R11),
-                    ),
-                ]);
-            }
+            compile_function_arguments(args, ctx, instr_vec, program);
 
             ctx.rbp_offset = rbp_offset_pre_arg_eval;
 
@@ -1121,8 +1157,7 @@ fn compile_to_instrs(
                 let class_signature = program.classes.get(&class_name).expect("Class definition not found");
                 println!("{}", method_name);
                 println!("{:?}", class_signature.methods.keys().collect::<Vec<&String>>());
-                let formatted_method_name = format!("__{}_{}", class_name, method_name);
-                let method_signature = class_signature.methods.get(&formatted_method_name).expect("Method definition not found");
+                let method_signature = class_signature.methods.get(method_name).expect("Method definition not found");
                 // VTable_idx stores: (index, class it came from (in the case of inheritance))
                 let vtable_idx = class_signature.vtable_indices.get(method_name).expect("Method definition not found in vtable");
 
@@ -1135,8 +1170,12 @@ fn compile_to_instrs(
                 }
 
                 // Pass in self as the first argument
+                
 
                 let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
+                let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                ctx.rbp_offset = arg_i_rbp_offset;
+                arg_evaluation_offsets.push(arg_i_rbp_offset);
 
                 for i in 1..method_signature.arg_types.len() {
                     let arg_expr = &args_vec[i];

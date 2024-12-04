@@ -12,13 +12,16 @@
     ((tires int))
     (
         (fun beep () bool
-            (true)
+            (block
+                (print self)
+                (true)
+            )
         )
     )  
 )
 
 (let
-    ((tesla (Car 4)))
+    ((tesla (Car 1200 4)))
     (block
         (call tesla beep)
     )

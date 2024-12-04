@@ -141,7 +141,7 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                 Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
                 Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
                 Sexp::Atom(S(val)) if val == "call" => {
-                    if let Expr::Id(func_name) = parse_expr(&vec[1], defns) {
+                    if let Expr::Id(func_name) = parse_expr(&vec[2], defns) {
                         let mut args: Vec<Expr> = Vec::new();
                         // call obj_name method_name arg1 arg2 arg3...
 
@@ -152,7 +152,7 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                             args.push(parse_expr(e, defns));
                         });
     
-                        Expr::CallMethod(Box::new(parse_expr(&vec[0], defns)), func_name, args)
+                        Expr::CallMethod(Box::new(parse_expr(&vec[1], defns)), func_name, args)
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
@@ -497,7 +497,7 @@ pub fn create_inheritance_graph(classes_map: &HashMap<String, Class>) -> HashMap
     inheritance_graph
 }
 
-pub fn resolve_vtable_indices(
+pub fn flatten_all_classes(
     classes_map: &mut HashMap<String, Class>,
     inheritance_graph: &HashMap<String, Vec<String>>,
 ) {
@@ -505,7 +505,7 @@ pub fn resolve_vtable_indices(
     let class_names = classes_map.keys().cloned().collect::<Vec<String>>();
 
     class_names.iter().for_each(|class_name| {
-        let _ = resolve_vtable_indices_by_class(
+        let _ = flatten_single_class(
             &class_name,
             &mut vtable_visited,
             inheritance_graph,
@@ -531,7 +531,7 @@ pub fn resolve_vtable_indices(
     // }
 }
 
-fn resolve_vtable_indices_by_class (
+fn flatten_single_class (
     current_class_name: &String,
     visited: &mut HashSet<String>,
     inheritance_graph: &HashMap<String, Vec<String>>,
@@ -562,8 +562,9 @@ fn resolve_vtable_indices_by_class (
         .inherits
         .clone();
 
+
     if current_class_inherits_name != BASE_CLASS_NAME {
-        resolve_vtable_indices_by_class(&current_class_inherits_name, visited, inheritance_graph, classes_map);
+        flatten_single_class(&current_class_inherits_name, visited, inheritance_graph, classes_map);
 
         // // Copy parent vtable indices to current class
         // for (method_name, index) in &class_signatures
@@ -574,18 +575,37 @@ fn resolve_vtable_indices_by_class (
         //     new_vtable_indices.insert(method_name.clone(), index.clone());
         // }
 
-        let parent_vtable_indices = &classes_map
-            .get(&current_class_inherits_name)
-            .expect("Class not found")
-            .vtable_indices;
+        // We need to adjust scopes for our immutable gets since can only have 1 at a time
+        let parent_class_vtable_indices = {
+            let parent_class = classes_map
+                .get(&current_class_inherits_name)
+                .expect("Class not found");
+            parent_class.vtable_indices.clone()
+        };
 
-        classes_map
+        let parent_class_field_types = {
+            let parent_class = classes_map
+                .get(&current_class_inherits_name)
+                .expect("Class not found");
+            parent_class.field_types.clone()
+        };
+
+        
+        let current_class = classes_map
             .get_mut(current_class_name)
-            .expect("Class not found")
-            .vtable_indices = parent_vtable_indices.clone();
+            .expect("Class not found");
 
+        current_class.vtable_indices = parent_class_vtable_indices;
+        let old_fields: Vec<(String, ExprType)> = current_class.field_types.clone();
+        current_class.field_types = parent_class_field_types;
+        current_class.field_types.extend(old_fields);
     }
 
+
+    let current_class = classes_map
+        .get_mut(current_class_name)
+        .expect("Class not found");
+    
     /*
      * VTable indices are stored/defined as follows:
      * - Each parent function should map to the same vtable index as it did in the parent class
@@ -593,9 +613,7 @@ fn resolve_vtable_indices_by_class (
      * - Each new function is mapped sequentially to a new index in the vtable
      */
 
-    let current_class = classes_map
-        .get_mut(current_class_name)
-        .expect("Class not found");
+    
 
     // let current_class_defined_methods = &classes_map
     //     .get(current_class_name)
@@ -636,7 +654,7 @@ fn resolve_vtable_indices_by_class (
     // Recurse on the children to populate all the remaining indices
     if let Some(children) = inheritance_graph.get(current_class_name) {
         for child_class_name in children {
-            resolve_vtable_indices_by_class(child_class_name, visited, inheritance_graph, classes_map);
+            flatten_single_class(child_class_name, visited, inheritance_graph, classes_map);
         }
     }
 }
@@ -808,7 +826,7 @@ pub fn parse_prog(s: &Sexp) -> Program {
 
     println!("inheritance_graph: {:?}", inheritance_graph);
 
-    resolve_vtable_indices(&mut classes, &inheritance_graph);
+    flatten_all_classes(&mut classes, &inheritance_graph);
 
     Program {
         functions: functions,
