@@ -485,6 +485,63 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
     }
 }
 
+fn compile_heap_allocated_lookup_field<T: HeapAllocated>(
+    e: &T,
+    field: &String,
+    ctx: &mut CompileCtx,
+    instr_vec: &mut Vec<Instr>,
+) -> ExprType {
+    let e1_addr_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+    ctx.rbp_offset = e1_addr_offset;
+
+    let field_index = e
+        .field_types()
+        .iter()
+        .position(|(field_name, _)| field_name == field);
+
+    if let Some(idx) = field_index {
+        instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RAX),
+            Val::RegOffset(Reg::RAX, ((idx as i32) + e.field_idx_start()) * SIZE_OF_DWORD),
+        ));
+
+        let field_eval_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+        ctx.rbp_offset = field_eval_offset;
+
+        let return_type = e.field_types()[idx].1.clone();
+
+        // Increment the ref count for the field if it's a record pointer
+        if return_type.is_heap_allocated() {
+            instr_vec.push(Instr::IMov(
+                Val::Reg(Reg::RDI),
+                Val::RegOffset(Reg::RBP, field_eval_offset),
+            ));
+            instr_vec.push(Instr::ICall("rc_incr".to_string()));
+        }
+
+        // Decrement the ref count of the record pointer which we're looking up with
+        // after the temporary increment from earlier
+        instr_vec.extend(vec![
+            Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, e1_addr_offset)),
+            Instr::ICall(format!("{}_record_rc_decr", e.name())),
+        ]);
+
+        // Move the evaluated field value into rax
+        instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RAX),
+            Val::RegOffset(Reg::RBP, field_eval_offset),
+        ));
+
+        return_type
+    } else {
+        panic!(
+            "Invalid field lookup: field {} not found in record/class {}",
+            field, e.name()
+        );
+    }
+}
+
+
 fn compile_heap_allocated_print(
     fields: &Vec<(String, ExprType)>,
     instr_vec: &mut Vec<Instr>,
@@ -804,12 +861,12 @@ fn compile_to_instrs(
 
             // Check for any pointer types in the bindings and decrement the references
             for (_var_name, (offset, e_type)) in newly_created_variable_scope.iter() {
-                if let ExprType::RecordPointer(record_name) = e_type {
+                if e_type.is_heap_allocated() {
                     instr_vec.push(Instr::IMov(
                         Val::Reg(Reg::RDI),
                         Val::RegOffset(Reg::RBP, *offset),
                     ));
-                    instr_vec.push(Instr::ICall(format!("{}_record_rc_decr", record_name)));
+                    instr_vec.push(Instr::ICall(format!("{}_record_rc_decr", e_type.extract_heap_allocated_type_name())));
                 }
             }
 
@@ -993,59 +1050,14 @@ fn compile_to_instrs(
             let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
-            let e1_addr_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-            ctx.rbp_offset = e1_addr_offset;
-
             if let ExprType::RecordPointer(record_name) = e1_type {
-                let record_signature = program.records.get(&record_name).unwrap();
-
-                let field_index = record_signature
-                    .field_types
-                    .iter()
-                    .position(|(field_name, _)| field_name == field);
-
-                if let Some(idx) = field_index {
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RAX, i32::try_from(idx + 1).unwrap() * SIZE_OF_DWORD),
-                    ));
-
-                    let field_eval_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                    ctx.rbp_offset = field_eval_offset;
-
-                    let return_type = record_signature.field_types[idx].1.clone();
-
-                    // Increment the ref count for the field if it's a record pointer
-                    if let ExprType::RecordPointer(_) = return_type {
-                        instr_vec.push(Instr::IMov(
-                            Val::Reg(Reg::RDI),
-                            Val::RegOffset(Reg::RBP, field_eval_offset),
-                        ));
-                        instr_vec.push(Instr::ICall("rc_incr".to_string()));
-                    }
-
-                    // Decrement the ref count of the record pointer which we're looking up with
-                    // after the temporary increment from earlier
-                    instr_vec.extend(vec![
-                        Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, e1_addr_offset)),
-                        Instr::ICall(format!("{}_record_rc_decr", record_name)),
-                    ]);
-
-                    // Move the evaluated field value into rax
-                    instr_vec.push(Instr::IMov(
-                        Val::Reg(Reg::RAX),
-                        Val::RegOffset(Reg::RBP, field_eval_offset),
-                    ));
-
-                    return_type
-                } else {
-                    panic!(
-                        "Invalid field lookup: field {} not found in record {}",
-                        field, record_name
-                    );
-                }
+                let record = program.records.get(&record_name).expect("Record definition not found.");
+                compile_heap_allocated_lookup_field(record, field, ctx, instr_vec)
+            } else if let ExprType::ObjectPointer(object_name) = e1_type {
+                let object = program.classes.get(&object_name).expect("Object definition not found.");
+                compile_heap_allocated_lookup_field(object, field, ctx, instr_vec)
             } else {
-                panic!("Invalid lookup expression, must be a non-null record pointer");
+                panic!("Invalid lookup expression, must be a non-null record or class pointer");
             }
         }
         Expr::RecordInitializer(record_name, fields) => {
@@ -1299,18 +1311,18 @@ fn compile_function_to_instrs(
     if func
         .arg_types
         .iter()
-        .any(|(_, t)| matches!(t, ExprType::RecordPointer(_)))
+        .any(|(_, t)| matches!(t, ExprType::RecordPointer(_)) || matches!(t, ExprType::ObjectPointer(_)))
     {
         let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
         ctx.rbp_offset = rax_offset;
 
         for (i, arg) in func.arg_types.iter().enumerate() {
-            if let ExprType::RecordPointer(record_name) = &arg.1 {
+            if arg.1.is_heap_allocated() {
                 // Decrement ref counter
                 let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
                 instr_vec.extend(vec![
                     Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, arg_rbp_offset)),
-                    Instr::ICall(format!("{}_record_rc_decr", record_name)),
+                    Instr::ICall(format!("{}_record_rc_decr", arg.1.extract_heap_allocated_type_name())),
                 ]);
             }
         }

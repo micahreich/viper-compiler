@@ -23,7 +23,7 @@
 (let
     ((tesla (Car 1200 4)))
     (block
-        (call tesla honk)
+        (print (lookup tesla tires) )
     )
 
 )
