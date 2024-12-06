@@ -21,7 +21,24 @@ pub const FUNCTION_EPILOGUE: [Instr; 2] = [
     Instr::IRet
 ];
 
-pub const RESERVED_KEYWORDS: [&str; 19] = [
+pub const PRINT_OPEN_PARENS: [Instr; 2] = [
+    Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)),
+    Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(1)),
+    // Instr::ICall(Cow::Borrowed("snek_print")),
+];
+
+pub const PRINT_CLOSED_PARENS: [Instr; 2] = [
+    Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)),
+    Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(1)),
+    // Instr::ICall(Cow::Borrowed("snek_print"))
+];
+
+pub const PRINT_NEWLINE: [Instr; 1] = [
+    Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(0)),
+    // Instr::ICall(Cow::Borrowed("snek_print"))
+];
+
+pub const RESERVED_KEYWORDS: [&str; 20] = [
     "let",
     "set!",
     "if",
@@ -41,6 +58,7 @@ pub const RESERVED_KEYWORDS: [&str; 19] = [
     "sub1",
     "lookup",
     "input",
+    "__tmp"
 ];
 
 #[derive(Debug, Clone)]
@@ -131,7 +149,7 @@ pub enum Expr {
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
     Call(String, Vec<Expr>), // this is for calling non object functions
-    CallMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
+    CallMethod(String, String, Vec<Expr>), // this is for calling object methods
     Lookup(Box<Expr>, String), // recordpointer, fieldname
 }
 
@@ -150,11 +168,11 @@ pub enum ExprType {
 impl ExprType {
     pub fn to_type_flag(&self) -> i32 {
         match self {
-            ExprType::Number => 0,
-            ExprType::Boolean => 1,
-            ExprType::RecordPointer(_) => 2,
-            ExprType::NullPtr => 4,
-            ExprType::ObjectPointer(_) => 5,
+            ExprType::Number => 2,
+            ExprType::Boolean => 3,
+            ExprType::RecordPointer(_) => 4,
+            ExprType::ObjectPointer(_) => 4,
+            ExprType::NullPtr => 5,
         }
     }
 
@@ -175,17 +193,17 @@ impl ExprType {
     }
 }
 
-impl FromStr for ExprType {
-    type Err = String;
+// impl FromStr for ExprType {
+//     type Err = String;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "int" => Ok(ExprType::Number),
-            "bool" => Ok(ExprType::Boolean),
-            _ => Ok(ExprType::RecordPointer(s.to_string())),
-        }
-    }
-}
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         match s {
+//             "int" => Ok(ExprType::Number),
+//             "bool" => Ok(ExprType::Boolean),
+//             _ => Ok(ExprType::RecordPointer(s.to_string())),
+//         }
+//     }
+// }
 
 pub trait HeapAllocated {
     fn name(&self) -> &String;
@@ -330,6 +348,8 @@ pub struct CompileCtx {
     pub rbp_offset: i32,
     pub rbx_offset: i32,
     pub tag_id: i32,
+    pub rbp_offset_stack: Vec<i32>,
+    pub rbx_offset_stack: Vec<i32>,
 }
 
 pub fn is_valid_identifier(s: &str) -> bool {

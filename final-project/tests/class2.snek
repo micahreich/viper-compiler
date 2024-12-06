@@ -1,0 +1,19 @@
+(class Vehicle Object 
+    (instance_vars
+        (miles_driven int)
+    )
+    (method_list
+        (fun honk () int
+            555
+        )
+    )
+)
+
+(fun make_vehicle_with_n_miles ((n int)) Vehicle
+    (Vehicle n)
+)
+
+(block
+    (print (make_vehicle_with_n_miles 777))
+    true
+)

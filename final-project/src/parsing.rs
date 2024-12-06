@@ -1,4 +1,5 @@
 use core::panic;
+use std::f32::consts::E;
 use im::{HashMap, HashSet};
 // use prettydiff::format_table::new;
 use sexp::Atom::*;
@@ -16,7 +17,13 @@ pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, defns: &ProgDefns) ->
             let bindings_vector: Vec<(String, Expr)> = vec.iter().map(|sexp_list| {
                 match sexp_list {
                     Sexp::List(vec) => match &vec[..] {
-                        [Sexp::Atom(S(identifier)), e] => (identifier.clone(), parse_expr(e, defns)),
+                        [Sexp::Atom(S(identifier)), e] => {
+                            if !is_valid_identifier(identifier) {
+                                panic!("Reserved keyword or invalid identifier used as variable name in let expression: {identifier}");
+                            }
+
+                            (identifier.clone(), parse_expr(e, defns))
+                        }
                         _ => {
                             println!("{:?}", vec);
                             panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)")
@@ -40,7 +47,7 @@ pub fn parse_block_expr(e_vec_sexp: &[Sexp], defns: &ProgDefns) -> Expr {
     let expression_vec: Vec<Expr> = e_vec_sexp.iter().map(|e| parse_expr(e, defns)).collect();
 
     if expression_vec.len() == 0 {
-        panic!("Blocks must have at least one expression");
+        panic!("Invalid program: blocks must have at least one expression");
     }
 
     Expr::Block(expression_vec)
@@ -48,7 +55,7 @@ pub fn parse_block_expr(e_vec_sexp: &[Sexp], defns: &ProgDefns) -> Expr {
 
 pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
     match s {
-        Sexp::Atom(Atom::F(_)) => panic!("Invalid program: floats are not allowed"),
+        Sexp::Atom(Atom::F(_)) => panic!("Invalid program: floats are not supported"),
         Sexp::Atom(Atom::S(str)) => {
             if str == "true" {
                 Expr::Boolean(true)
@@ -70,10 +77,20 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                 Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e, defns)))
             }
             [Sexp::Atom(S(op)), e] if op == "print" => {
-                Expr::UnOp(Op1::Print, Box::new(parse_expr(e, defns)))
+                Expr::Let(
+                    vec![("__tmp".into(), parse_expr(e, defns))],
+                    Box::new(
+                        Expr::UnOp(Op1::Print, Box::new(Expr::Id("__tmp".into())))
+                    )
+                )
             }
             [Sexp::Atom(S(op)), e1, Sexp::Atom(S(field))] if op == "lookup" => {
-                Expr::Lookup(Box::new(parse_expr(e1, defns)), field.clone())
+                // We parse a lookup expression as let x = eval record, then lookup the field in x
+                // This is done to avoid GC errors when the record is created inside the lookup expr
+                Expr::Let(
+                    vec![("__tmp".into(), parse_expr(e1, defns))],
+                    Box::new(Expr::Lookup(Box::new(Expr::Id("__tmp".into())), field.clone()))
+                )
             }
             [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(
                 Op2::Plus,
@@ -141,18 +158,37 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                 Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
                 Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
                 Sexp::Atom(S(val)) if val == "call" => {
-                    if let Expr::Id(func_name) = parse_expr(&vec[2], defns) {
-                        let mut args: Vec<Expr> = Vec::new();
+                    if let Sexp::Atom(S(method_name)) = &vec[2] {
+                        let args: Vec<Expr> = vec![Expr::Id("__tmp".into())].into_iter()
+                            .chain(
+                                vec.iter().skip(3).map(|e| {
+                                    parse_expr(e, defns)
+                                })
+                            )
+                        .collect();
+
+                        Expr::Let(
+                            vec![("__tmp".into(), parse_expr(&vec[1], defns))],
+                            Box::new(
+                                Expr::CallMethod(
+                                    "__tmp".into(),
+                                    method_name.clone(),
+                                    args,
+                                )
+                            ),
+                        )
+
+                        // let mut args: Vec<Expr> = Vec::new();
                         // call obj_name method_name arg1 arg2 arg3...
 
                         // Since the first argument to call is an object
                         // that can't be resolved during parsing, we postpone
-                        // checking validity of the method call to the actually compiling step
-                        vec.iter().skip(3).enumerate().for_each(|(i, e)| {
-                            args.push(parse_expr(e, defns));
-                        });
+                        // checking validity of the method call to the compiling step
+                        // vec.iter().skip(3).enumerate().for_each(|(i, e)| {
+                        //     args.push(parse_expr(e, defns));
+                        // });
     
-                        Expr::CallMethod(Box::new(parse_expr(&vec[1], defns)), func_name, args)
+                        // Expr::CallMethod(Box::new(parse_expr(&vec[1], defns)), method_name, args)
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
@@ -160,7 +196,7 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                 Sexp::Atom(S(name)) => {
                     let mut args: Vec<Expr> = Vec::new();
 
-                    vec.iter().skip(1).enumerate().for_each(|(i, e)| {
+                    vec.iter().skip(1).for_each(|e| {
                         args.push(parse_expr(e, defns));
                     });
 
@@ -183,17 +219,28 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
     }
 }
 
-pub fn parse_type(s: &Sexp) -> ExprType {
+pub fn parse_type(s: &Sexp, defns: &ProgDefns) -> ExprType {
     match s {
-        Sexp::Atom(S(type_name)) => type_name.parse().unwrap(),
+        Sexp::Atom(S(type_name)) => match type_name.as_str() {
+            "int" => ExprType::Number,
+            "bool" => ExprType::Boolean,
+            _ => {
+                if defns.record_names.contains(type_name) {
+                    ExprType::RecordPointer(type_name.into())
+                } else if defns.class_names.contains(type_name) {
+                    ExprType::ObjectPointer(type_name.into())
+                } else {
+                    panic!("Invalid program: type name not found in record or class definitions")
+                }
+            }
+        }
         _ => {
-            println!("{}", s);
-            panic!("Unexpected type")
+            panic!("Type name must be a string literal");
         }
     }
 }
 
-pub fn parse_argument(s: &Sexp) -> (String, ExprType) {
+pub fn parse_argument(s: &Sexp, defns: &ProgDefns) -> (String, ExprType) {
     match s {
         Sexp::Atom(_) => panic!("Malformed function argument"),
         Sexp::List(vec) => {
@@ -206,21 +253,21 @@ pub fn parse_argument(s: &Sexp) -> (String, ExprType) {
                 _ => panic!("Malformed function argument"),
             };
 
-            let arg_type = parse_type(&vec[1]);
+            let arg_type = parse_type(&vec[1], defns);
 
             (arg_name.to_string(), arg_type)
         }
     }
 }
 
-pub fn parse_record_defn(s: &Sexp) -> Record {
+pub fn parse_record_defn(s: &Sexp, defns: &ProgDefns) -> Record {
     match s {
         Sexp::Atom(_) => panic!("Malformed definition"),
         Sexp::List(vec) => {
             match &vec[0] {
                 Sexp::Atom(S(name)) => {
                     if name != "record" {
-                        panic!("Malformed record definition, expecting function definition with keyword `record`");
+                        panic!("Malformed record definition, expecting record definition with keyword `record`");
                     }
                 }
                 _ => panic!("Malformed definition"),
@@ -236,7 +283,7 @@ pub fn parse_record_defn(s: &Sexp) -> Record {
 
             if let Sexp::List(arg_vec) = &vec[2] {
                 for s1 in arg_vec {
-                    record_fields.push(parse_argument(s1));
+                    record_fields.push(parse_argument(s1, defns));
                 }
             } else {
                 panic!("Malformed definition: expecting argument list after function name");
@@ -250,7 +297,7 @@ pub fn parse_record_defn(s: &Sexp) -> Record {
     }
 }
 
-pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
+pub fn parse_class_signature(s: &Sexp, defns: &ProgDefns) -> ClassSignature {
     match s {
         Sexp::Atom(_) => panic!("Malformed class definition"),
         Sexp::List(vec) => {
@@ -275,13 +322,23 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
                 panic!("Malformed class definition: expecting inherited class name after class name");
             };
 
-            // TODO @dkrajews: make this support the case of having no instance variables and only methods
-
+            // TODO @dkrajews: have this support the case of having no instance variables and only methods
             let mut field_types: Vec<(String, ExprType)> = Vec::new();
 
             if let Sexp::List(arg_vec) = &vec[3] {
-                for s1 in arg_vec {
-                    field_types.push(parse_argument(s1));
+                println!("arg vec in parse class sig: {:?}", arg_vec);
+                if arg_vec[0] != Sexp::Atom(S("instance_vars".into())) {
+                    panic!("Malformed definition: expecting instance variable list after class name with label `instance_vars`");
+                }
+
+                for s1 in arg_vec.iter().skip(1) {
+                    field_types.push(parse_argument(s1, defns));
+                }
+
+                ClassSignature {
+                    name: class_name.clone(),
+                    inherits: inherits_name.clone(),
+                    field_types: field_types,
                 }
             } else {
                 panic!("Malformed definition: expecting instance variable list after class name");
@@ -310,18 +367,12 @@ pub fn parse_class_signature(s: &Sexp) -> ClassSignature {
             // } else {
             //     panic!("Malformed definition: expecting argument list after method name");
             // }
-
-            ClassSignature {
-                name: class_name.clone(),
-                inherits: inherits_name.clone(),
-                field_types: field_types,
-            }
         }
     }
 }
 
 pub fn parse_class_defn(s: &Sexp, defns: &ProgDefns) -> Class {
-    let signature = parse_class_signature(s);
+    let signature = parse_class_signature(s, defns);
     let methods = parse_class_methods(s, defns);
 
     Class {
@@ -333,7 +384,7 @@ pub fn parse_class_defn(s: &Sexp, defns: &ProgDefns) -> Class {
     }
 }
 
-pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
+pub fn parse_func_signature(s: &Sexp, defns: &ProgDefns) -> FunctionSignature {
     match s {
         Sexp::Atom(_) => panic!("Malformed definition"),
         Sexp::List(vec) => {
@@ -352,13 +403,13 @@ pub fn parse_func_signature(s: &Sexp) -> FunctionSignature {
                 panic!("Malformed definition")
             };
 
-            let func_type = parse_type(&vec[vec.len() - 2]);
+            let func_type = parse_type(&vec[vec.len() - 2], defns);
 
             let mut func_args: Vec<(String, ExprType)> = Vec::new();
 
             if let Sexp::List(arg_vec) = &vec[2] {
                 for s1 in arg_vec {
-                    func_args.push(parse_argument(s1));
+                    func_args.push(parse_argument(s1, defns));
                 }
             } else {
                 panic!("Malformed definition: expecting argument list after function name");
@@ -377,7 +428,7 @@ pub fn parse_func_defn(
     s: &Sexp,
     defns: &ProgDefns,
 ) -> Function {
-    let signature = parse_func_signature(s);
+    let signature = parse_func_signature(s, defns);
 
     match s {
         Sexp::List(vec) => {
@@ -434,9 +485,13 @@ pub fn parse_class_methods(s: &Sexp, defns: &ProgDefns) -> HashMap<String, Funct
 
             match &sub_vec[4] {
                 Sexp::List(func_vec) => {
+                    if func_vec[0] != Sexp::Atom(S("method_list".into())) {
+                        panic!("Malformed definition: expecting method list after class name with label `method_list`");
+                    }
+
                     let mut class_methods: HashMap<String, Function> = HashMap::new();
 
-                    func_vec.iter().for_each(|s1| {
+                    func_vec.iter().skip(1).for_each(|s1| {
                         let mut func = parse_func_defn(s1, defns);
                         let method_name_unmangled = func.name.clone();
 
@@ -474,7 +529,7 @@ pub fn parse_class_methods(s: &Sexp, defns: &ProgDefns) -> HashMap<String, Funct
                     return class_methods;
                 }
                 _ => panic!("Malformed class definition"),
-            };
+            }
         }
         _ => panic!("Malformed program"),
     }
@@ -786,12 +841,14 @@ pub fn parse_prog(s: &Sexp) -> Program {
                             let func = parse_func_defn(s1, &defns);
                             let name = func.name.clone();
 
+                            println!("Parsed function: {:?}", func.body);
+
                             if functions.insert(name.clone(), func).is_some() {
                                 panic!("Duplicate function definition: {}", name);
                             }
                         }
                         Sexp::Atom(S(name)) if name == "record" => {
-                            let record = parse_record_defn(s1);
+                            let record = parse_record_defn(s1, &defns);
                             let name = record.name.clone();
 
                             if records
@@ -827,6 +884,7 @@ pub fn parse_prog(s: &Sexp) -> Program {
     let inheritance_graph = create_inheritance_graph(&classes);
 
     println!("inheritance_graph: {:?}", inheritance_graph);
+    println!("main expr: {:?}", main_expr);
 
     flatten_all_classes(&mut classes, &inheritance_graph);
 

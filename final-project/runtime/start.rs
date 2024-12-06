@@ -33,11 +33,20 @@ pub extern "C" fn snek_error(errcode: i64) {
 #[export_name = "\x01snek_print"]
 pub extern "C" fn snek_print(value: i64, type_kind: u64) {
     match type_kind {
-        1 => if value == 0 { println!("false") } else { println!("true") }, // boolean
-        0 => println!("{value}"), // integer
-        2 => println!("(ptr)"),
-        4 => println!("NULL"),
-        5 => if value == 0 { println!("(") } else { println!(")") }
+        0 => print!("\n"),
+        1 => if value == 0 { print!("( ") } else { print!(")") }
+        2 => print!("{value} "), // integer
+        3 => if value == 0 { print!("false ") } else { print!("true") }, // boolean
+        5 => print!("NULL "),
+        4 => {
+            // Treat `value` as a pointer to a null-terminated string
+            let c_string = unsafe { std::ffi::CStr::from_ptr(value as *const i8) };
+            if let Ok(rust_string) = c_string.to_str() {
+                print!("{rust_string} ");
+            } else {
+                print!("<invalid string>");
+            }
+        }
         _ => snek_error(2),
     };
 }

@@ -1,31 +1,49 @@
 (class Vehicle Object 
-    ((miles_driven int))
-    (
-        (fun honk () bool
-            (false)
+    (instance_vars
+        (miles_driven int)
+    )
+    (method_list
+        (fun honk () int
+            (block
+                (print self)
+                555
+            )
         )
-    )   
-
+    )
 )
 
 (class Car Vehicle
-    ((tires int))
-    (
-        (fun beep () bool
+    (instance_vars
+        (tires int)
+    )
+    (method_list
+        (fun beep () int
             (block
                 (print self)
-                (true)
+                666
             )
         )
-    )  
+    )
+)
+
+(fun miles_driven ((v Vehicle)) int
+    (print (lookup v miles_driven))
+)
+
+(fun make_car_with_n_miles ((n int)) Vehicle
+    (Vehicle n)
 )
 
 (let
     ((tesla (Car 1200 4)))
     (block
         (print (lookup tesla tires) )
+        (print (lookup tesla miles_driven) )
+        (print (call tesla beep) )
+        (print (call tesla honk) )
+        (miles_driven tesla)
+        (make_car_with_n_miles 777)
     )
-
 )
 
 

@@ -35,18 +35,26 @@
             )
         )
     )
-    
+)
+
+(fun print_tree ((root bst_node)) int
+    (if
+        (= root NULL)
+        -1
+        (block
+            (print_tree (lookup root left))
+            (print (lookup root val))
+            (print_tree (lookup root right))
+        )
+    )
 )
 
 (let
     ((root (bst_node 10 (bst_node 3 NULL NULL) (bst_node 12 (bst_node 11 NULL NULL) (bst_node 20 NULL NULL)))) (search_res (search_value input root)))
     (block 
-        (print search_res)
-        (let
-            ((new_root (insert_value input root)))
-            (search_value input new_root)
-        )
-
+        (print_tree root)
+        (set! root (insert_value input root))
+        (print_tree root)
     )
 )
 
