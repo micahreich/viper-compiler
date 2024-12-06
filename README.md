@@ -1,6 +1,9 @@
 <!-- Logo and Title Section -->
 <h1 align="center">🐍  Viper: Language & Compiler</h1>
 
+![Rust](https://img.shields.io/badge/Rust-%23DEA584.svg?style=for-the-badge&logo=rust&logoColor=white)
+
+
 ## Introduction
 
 Viper is a simple programming language modeled after Lisp and ML. The language and compiler were written as an educational exercise to learn about programming language and compiler design. The compiler is written in Rust and designed to produce machine code for x86-64 Linux systems. 
