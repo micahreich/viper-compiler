@@ -1,24 +1,20 @@
 (record bst_node ((val int) (left bst_node) (right bst_node)))
 
 (fun search_value ((val int) (root bst_node)) bool
-    (if (= root NULL) 
-    (block
-        (false)
-    )
-    (let
-        ((curr_val (lookup root val)))
-        (if 
-            (= curr_val val)
-            (block
-                (true)
+    (if
+        (= root NULL) 
+        false
+        (let
+            ((curr_val (lookup root val)))
+            (if 
+                (= curr_val val)
+                true
+                (if (< val curr_val)
+                    (search_value val (lookup root left))
+                    (search_value val (lookup root right))
+                )
             )
-            (if (< val curr_val)
-                (search_value val (lookup root left))
-                (search_value val (lookup root right))
-            )
-            
         )
-    )
     )
 )
 
