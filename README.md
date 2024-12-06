@@ -18,8 +18,8 @@ Viper has many standard programming language features, including:
 - Scoping / shadowing
 - Functions
 - Heap-allocated structs / records
-- Classes and objects with dynamic dispatch
 - Garbage collection
+- Classes and objects with single inheritance, dynamic dispatch
 - Command-line input
 
 ## Example Code
@@ -107,5 +107,5 @@ Viper is not fully feature-complete, with the following as notable points for fu
 - Comments
 - Peephole optimization via register allocation, constant folding, constant propagation
 - Cycle-detection in the reference counter-based GC system
-- Redundant load/stores, instruction optimization
+- Remove redundant load/stores, instruction optimization
 - Cross-platform compilation / support for ARM processors
