@@ -1200,25 +1200,12 @@ fn compile_expr(
             ExprType::ObjectPointer(class_name.clone())
         }
         Expr::CallMethod(obj_id, method_name, args) => {
-            // arg 1 is the class we are calling on, arg 2 is the func name, arg 3 is args
-
-            // // Track the old carry forward assignment value, temporarily set to 1 for arguments
-            // ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
-            // let rbp_offset_pre_arg_eval = ctx.rbp_offset;
-
             // Compile first argument and ensure it points to an object
             let (_, obj_id_type) = ctx
                 .scope
                 .get(obj_id)
                 .expect("Class not found in scope during set expression")
                 .clone();
-
-            // ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, false);
-            // let obj_arg_type = compile_to_instrs(obj_expr, ctx, instr_vec, program);
-            // ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
-
-            // let obj_arg_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-            // ctx.rbp_offset = obj_arg_rbp_offset;
 
             if let ExprType::ObjectPointer(class_name) = obj_id_type {
                 let class_signature = program
@@ -1249,48 +1236,6 @@ fn compile_expr(
 
                 compile_function_arguments(args, ctx, instr_vec, program, 0);
 
-                // Pass in self as the first argument
-                // let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
-                // let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                // ctx.rbp_offset = arg_i_rbp_offset;
-                // arg_evaluation_offsets.push(arg_i_rbp_offset);
-
-                // for i in 1..method_signature.arg_types.len() {
-                //     let arg_expr = &args_vec[i];
-
-                //     let arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
-                //     let expected_arg_type = &method_signature.arg_types[i].1;
-
-                //     if arg_type != *expected_arg_type {
-                //         panic!("Argument {} to {} has the wrong type", i, method_name);
-                //     }
-
-                //     // Push the evaluated arguments onto the stack in the correct order, using the
-                //     // following ordering convention:
-                //     // [arg 4] 0x20
-                //     // [arg 3] 0x18
-                //     // [arg 2] 0x10
-                //     // [arg 1] 0x08 <- $rsp
-
-                //     let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                //     ctx.rbp_offset = arg_i_rbp_offset;
-
-                //     arg_evaluation_offsets.push(arg_i_rbp_offset);
-                // }
-
-                // ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
-
-                // for (i, offset) in arg_evaluation_offsets.iter().enumerate() {
-                //     instr_vec.extend(vec![
-                //         // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
-                //         Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, *offset)),
-                //         Instr::IMov(
-                //             Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
-                //             Val::Reg(Reg::R11),
-                //         ),
-                //     ]);
-                // }
-
                 // Grab method (function pointer) from vtable and call it
                 instr_vec.extend(vec![
                     Instr::IMov(
@@ -1303,11 +1248,7 @@ fn compile_expr(
                     ),
                     Instr::ICall(reg_to_str(&Reg::R11).into()),
                 ]);
-                // instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::LabelPointer(format!("[{}_VTable+{}]", class_name, (vtable_idx.0 as i32) * SIZE_OF_DWORD))));
-
-                // Call the function
-                // instr_vec.push(Instr::ICall("r11".to_string()));
-
+                
                 method_signature.return_type.clone()
             } else {
                 panic!("Cannot call method on a non-object");
