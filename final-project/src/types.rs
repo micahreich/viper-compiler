@@ -1,12 +1,9 @@
-use std::str::FromStr;
+use std::borrow::Cow;
 
 use im::{HashMap, HashSet};
 use regex::Regex;
 
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
-
-pub type ProgramFunctions = Vec<Function>;
-pub type ProgramClasses = Vec<Class>;
 
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
 pub const SIZE_OF_DWORD: i32 = 8;
@@ -18,21 +15,21 @@ pub const BASE_CLASS_NAME: &str = "Object";
 
 pub const FUNCTION_EPILOGUE: [Instr; 2] = [Instr::ILeave, Instr::IRet];
 
-pub const PRINT_OPEN_PARENS: [Instr; 2] = [
+pub const PRINT_OPEN_PARENS: [Instr; 3] = [
     Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)),
     Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(1)),
-    // Instr::ICall(Cow::Borrowed("snek_print")),
+    Instr::ICall(Cow::Borrowed("snek_print")),
 ];
 
-pub const PRINT_CLOSED_PARENS: [Instr; 2] = [
+pub const PRINT_CLOSED_PARENS: [Instr; 3] = [
     Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)),
     Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(1)),
-    // Instr::ICall(Cow::Borrowed("snek_print"))
+    Instr::ICall(Cow::Borrowed("snek_print"))
 ];
 
-pub const PRINT_NEWLINE: [Instr; 1] = [
+pub const PRINT_NEWLINE: [Instr; 2] = [
     Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(0)),
-    // Instr::ICall(Cow::Borrowed("snek_print"))
+    Instr::ICall(Cow::Borrowed("snek_print"))
 ];
 
 pub const RESERVED_KEYWORDS: [&str; 20] = [
@@ -82,33 +79,29 @@ pub enum Reg {
 }
 
 #[derive(Debug, Clone)]
-pub enum Instr {
+pub enum Instr<'a> {
     IMov(Val, Val),
     IAdd(Val, Val),
     ISub(Val, Val),
     IMul(Val, Val),
-    IAnd(Val, Val),
-    ITag(String),
-    IJump(String),
-    IJumpEqual(String),
-    IJumpNotEqual(String),
-    IJumpLess(String),
+    ITag(Cow<'a, str>),
+    IJump(Cow<'a, str>),
+    IJumpEqual(Cow<'a, str>),
+    IJumpNotEqual(Cow<'a, str>),
+    IJumpLess(Cow<'a, str>),
     ICmp(Val, Val),
     ICMovEqual(Val, Val),
     ICMovLess(Val, Val),
     ICMovLessEqual(Val, Val),
     ICMovGreater(Val, Val),
     ICMovGreaterEqual(Val, Val),
-    ICall(String),
-    IJumpOverflow(String),
-    IPush(Val),
-    IPop(Val),
+    ICall(Cow<'a, str>),
+    IJumpOverflow(Cow<'a, str>),
     IRet,
-    IComment(String),
+    IComment(Cow<'a, str>),
     IEnter(i32),
     ILeave,
-    ISyscall,
-    IDq(String),
+    IDq(Cow<'a, str>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -188,18 +181,6 @@ impl ExprType {
     }
 }
 
-// impl FromStr for ExprType {
-//     type Err = String;
-
-//     fn from_str(s: &str) -> Result<Self, Self::Err> {
-//         match s {
-//             "int" => Ok(ExprType::Number),
-//             "bool" => Ok(ExprType::Boolean),
-//             _ => Ok(ExprType::RecordPointer(s.to_string())),
-//         }
-//     }
-// }
-
 pub trait HeapAllocated {
     fn name(&self) -> &String;
     fn field_types(&self) -> &Vec<(String, ExprType)>;
@@ -236,9 +217,6 @@ pub struct ClassSignature {
     pub name: String,
     pub inherits: String,
     pub field_types: Vec<(String, ExprType)>,
-    // pub method_signatures: HashMap<String, FunctionSignature>,
-    // /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
-    // pub vtable_indices: HashMap<String, (usize, String)>
 }
 
 #[derive(Debug, Clone, Hash)]

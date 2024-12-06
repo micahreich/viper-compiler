@@ -1,6 +1,5 @@
 use core::panic;
 use im::{HashMap, HashSet};
-use std::f32::consts::E;
 // use prettydiff::format_table::new;
 use sexp::Atom::*;
 use sexp::*;
@@ -76,19 +75,20 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
             [Sexp::Atom(S(op)), e] if op == "sub1" => {
                 Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e, defns)))
             }
-            [Sexp::Atom(S(op)), e] if op == "print" => Expr::Let(
-                vec![("__tmp".into(), parse_expr(e, defns))],
-                Box::new(Expr::UnOp(Op1::Print, Box::new(Expr::Id("__tmp".into())))),
-            ),
+            [Sexp::Atom(S(op)), e] if op == "print" => {
+                Expr::Let(
+                    vec![("__tmp".into(), parse_expr(e, defns))],
+                    Box::new(
+                        Expr::UnOp(Op1::Print, Box::new(Expr::Id("__tmp".into())))
+                    )
+                )
+            }
             [Sexp::Atom(S(op)), e1, Sexp::Atom(S(field))] if op == "lookup" => {
                 // We parse a lookup expression as let x = eval record, then lookup the field in x
                 // This is done to avoid GC errors when the record is created inside the lookup expr
                 Expr::Let(
                     vec![("__tmp".into(), parse_expr(e1, defns))],
-                    Box::new(Expr::Lookup(
-                        Box::new(Expr::Id("__tmp".into())),
-                        field.clone(),
-                    )),
+                    Box::new(Expr::Lookup(Box::new(Expr::Id("__tmp".into())), field.clone()))
                 )
             }
             [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(
@@ -149,24 +149,32 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                 Box::new(parse_expr(e2, defns)),
                 Box::new(parse_expr(e3, defns)),
             ),
-            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => Expr::RepeatUntil(
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
-            ),
+            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => {
+                Expr::RepeatUntil(Box::new(parse_expr(e1, defns)), Box::new(parse_expr(e2, defns)))
+            },
             _ => match &vec[0] {
                 Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], defns),
                 Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
                 Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
                 Sexp::Atom(S(val)) if val == "call" => {
                     if let Sexp::Atom(S(method_name)) = &vec[2] {
-                        let args: Vec<Expr> = vec![Expr::Id("__tmp".into())]
-                            .into_iter()
-                            .chain(vec.iter().skip(3).map(|e| parse_expr(e, defns)))
-                            .collect();
+                        let args: Vec<Expr> = vec![Expr::Id("__tmp".into())].into_iter()
+                            .chain(
+                                vec.iter().skip(3).map(|e| {
+                                    parse_expr(e, defns)
+                                })
+                            )
+                        .collect();
 
                         Expr::Let(
                             vec![("__tmp".into(), parse_expr(&vec[1], defns))],
-                            Box::new(Expr::CallMethod("__tmp".into(), method_name.clone(), args)),
+                            Box::new(
+                                Expr::CallMethod(
+                                    "__tmp".into(),
+                                    method_name.clone(),
+                                    args,
+                                )
+                            ),
                         )
 
                         // let mut args: Vec<Expr> = Vec::new();
@@ -178,12 +186,12 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                         // vec.iter().skip(3).enumerate().for_each(|(i, e)| {
                         //     args.push(parse_expr(e, defns));
                         // });
-
+    
                         // Expr::CallMethod(Box::new(parse_expr(&vec[1], defns)), method_name, args)
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
-                }
+                },
                 Sexp::Atom(S(name)) => {
                     let mut args: Vec<Expr> = Vec::new();
 
@@ -224,7 +232,7 @@ pub fn parse_type(s: &Sexp, defns: &ProgDefns) -> ExprType {
                     panic!("Invalid program: type name not found in record or class definitions")
                 }
             }
-        },
+        }
         _ => {
             panic!("Type name must be a string literal");
         }
@@ -310,9 +318,7 @@ pub fn parse_class_signature(s: &Sexp, defns: &ProgDefns) -> ClassSignature {
             let inherits_name = if let Sexp::Atom(S(name)) = &vec[2] {
                 name
             } else {
-                panic!(
-                    "Malformed class definition: expecting inherited class name after class name"
-                );
+                panic!("Malformed class definition: expecting inherited class name after class name");
             };
 
             // TODO @dkrajews: have this support the case of having no instance variables and only methods
@@ -417,7 +423,10 @@ pub fn parse_func_signature(s: &Sexp, defns: &ProgDefns) -> FunctionSignature {
     }
 }
 
-pub fn parse_func_defn(s: &Sexp, defns: &ProgDefns) -> Function {
+pub fn parse_func_defn(
+    s: &Sexp,
+    defns: &ProgDefns,
+) -> Function {
     let signature = parse_func_signature(s, defns);
 
     match s {
@@ -498,6 +507,7 @@ pub fn parse_class_methods(s: &Sexp, defns: &ProgDefns) -> HashMap<String, Funct
                             panic!("Duplicate method definition: {method_name_unmangled} in class {class_name}");
                         }
                     });
+                    
 
                     // for s1 in func_vec {
                     //     class_methods.insert(
@@ -524,9 +534,7 @@ pub fn parse_class_methods(s: &Sexp, defns: &ProgDefns) -> HashMap<String, Funct
     }
 }
 
-pub fn create_inheritance_graph(
-    classes_map: &HashMap<String, Class>,
-) -> HashMap<String, Vec<String>> {
+pub fn create_inheritance_graph(classes_map: &HashMap<String, Class>) -> HashMap<String, Vec<String>> {
     let mut inheritance_graph: HashMap<String, Vec<String>> = HashMap::new();
 
     for class in classes_map.values() {
@@ -577,7 +585,7 @@ pub fn flatten_all_classes(
     // }
 }
 
-fn flatten_single_class(
+fn flatten_single_class (
     current_class_name: &String,
     visited: &mut HashSet<String>,
     inheritance_graph: &HashMap<String, Vec<String>>,
@@ -600,7 +608,7 @@ fn flatten_single_class(
     //     .get(current_class)
     //     .expect("Class signature not found")
     //     .clone();
-
+    
     // Resolve parent vtable indices first
     let current_class_inherits_name = classes_map
         .get(current_class_name)
@@ -608,13 +616,9 @@ fn flatten_single_class(
         .inherits
         .clone();
 
+
     if current_class_inherits_name != BASE_CLASS_NAME {
-        flatten_single_class(
-            &current_class_inherits_name,
-            visited,
-            inheritance_graph,
-            classes_map,
-        );
+        flatten_single_class(&current_class_inherits_name, visited, inheritance_graph, classes_map);
 
         // // Copy parent vtable indices to current class
         // for (method_name, index) in &class_signatures
@@ -640,6 +644,7 @@ fn flatten_single_class(
             parent_class.field_types.clone()
         };
 
+        
         let current_class = classes_map
             .get_mut(current_class_name)
             .expect("Class not found");
@@ -648,18 +653,22 @@ fn flatten_single_class(
         let old_fields: Vec<(String, ExprType)> = current_class.field_types.clone();
         current_class.field_types = parent_class_field_types;
         current_class.field_types.extend(old_fields);
+
     }
+
 
     let current_class = classes_map
         .get_mut(current_class_name)
         .expect("Class not found");
-
+    
     /*
      * VTable indices are stored/defined as follows:
      * - Each parent function should map to the same vtable index as it did in the parent class
      *  (note this won't really work for multiple inheritance which we don't support)
      * - Each new function is mapped sequentially to a new index in the vtable
      */
+
+    
 
     // let current_class_defined_methods = &classes_map
     //     .get(current_class_name)
@@ -671,6 +680,7 @@ fn flatten_single_class(
     //     .expect("Class not found")
     //     .vtable_indices;
 
+
     for method_name in current_class.methods.keys() {
         // let existing_vtable_entry = classes_map
         //     .get(current_class_name)
@@ -678,14 +688,10 @@ fn flatten_single_class(
         //     .vtable_indices.get(method_name);
 
         if let Some((i, class_owner_name)) = current_class.vtable_indices.get(method_name) {
-            current_class
-                .vtable_indices
-                .insert(method_name.clone(), (*i, class_owner_name.clone()));
+            current_class.vtable_indices.insert(method_name.clone(), (*i, class_owner_name.clone()));
         } else {
             let index = current_class.vtable_indices.len();
-            current_class
-                .vtable_indices
-                .insert(method_name.clone(), (index, current_class_name.clone()));
+            current_class.vtable_indices.insert(method_name.clone(), (index, current_class_name.clone()));
         }
 
         // if new_vtable_indices.contains_key(method_name) {
@@ -813,7 +819,7 @@ pub fn parse_prog(s: &Sexp) -> Program {
                             }
                             _ => (),
                         }
-                    }
+                    },
                     _ => (),
                 }
             }
@@ -844,7 +850,10 @@ pub fn parse_prog(s: &Sexp) -> Program {
                             let record = parse_record_defn(s1, &defns);
                             let name = record.name.clone();
 
-                            if records.insert(name.clone(), record).is_some() {
+                            if records
+                                .insert(name.clone(), record)
+                                .is_some()
+                            {
                                 panic!("Duplicate record definition: {}", name);
                             }
                         }
@@ -852,7 +861,10 @@ pub fn parse_prog(s: &Sexp) -> Program {
                             let class = parse_class_defn(s1, &defns);
                             let name = class.name.clone();
 
-                            if classes.insert(class.name.clone(), class).is_some() {
+                            if classes
+                                .insert(class.name.clone(), class)
+                                .is_some()
+                            {
                                 panic!("Duplicate class definition: {}", name);
                             }
                         }

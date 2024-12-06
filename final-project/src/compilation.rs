@@ -82,12 +82,6 @@ fn push_rbx_and_set_carry_forward(instr_vec: &mut Vec<Instr>, rbx_offset: i32, v
     new_rbx_offset
 }
 
-// /// Calculate the size of a record in bytes
-// fn calculate_record_size(signature: &Record) -> i32 {
-//     i32::try_from((signature.field_types.len() + 1) * SIZE_OF_DWORD as usize)
-//         .expect("Record size (+1) in bytes exceeds i32 max value")
-// }
-
 /// Round a positive integer up to the next multiple of 16
 fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
     println!("Rounding up: {} to {}", n, (n + 15) & !15);
@@ -112,25 +106,13 @@ fn stack_space_needed(e: &Expr) -> i32 {
         }
         Expr::BinOp(_, e1, e2) => {
             // For binary operations, we need to push the result of e2 to the stack
-            // SIZE_OF_DWORD + stack_space_needed(e1) + stack_space_needed(e2)
             std::cmp::max(
                 SIZE_OF_DWORD + stack_space_needed(e1),
                 stack_space_needed(e2),
             )
         }
         Expr::Let(bindings, e) => {
-            // // We push the evaluation of each binding to the stack
-            // let mut space_needed = 0;
-
-            // for (_, binding_e) in bindings {
-            //     space_needed += stack_space_needed(binding_e);
-            //     space_needed += SIZE_OF_DWORD;
-            // }
-
-            // space_needed + // Space needed for bindings eval + storage
-            // stack_space_needed(e) + // Space needed for let body expression
-            // 1 * SIZE_OF_DWORD // Space needed to temporarily store body eval
-
+            // We push the evaluation of each binding to the stack
             let space_needed_for_bindings = SIZE_OF_DWORD * (bindings.len() as i32);
             let space_needed_for_bindings_eval =
                 bindings
@@ -217,7 +199,7 @@ fn stack_space_needed(e: &Expr) -> i32 {
 }
 
 /// Compute the amount of stack space needed to evaluate an expression in terms of the
-/// RBX mini-stack which is used to store the carry forward assignment value
+/// $rbx mini-stack which is used to store the carry forward assignment value
 fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
     match e {
         Expr::Number(_)
@@ -236,6 +218,16 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
                 space_needed_for_e + SIZE_OF_DWORD,
             )
         }
+        Expr::Set(_, expr) => {
+            SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr)
+        }
+        Expr::Block(expr_vec) => {
+            let space_needed_for_block = expr_vec.iter().fold(0, |acc, e| {
+                std::cmp::max(acc, rbx_storage_stack_space_needed(e))
+            });
+
+            space_needed_for_block + SIZE_OF_DWORD
+        }
         Expr::If(expr_cond, expr_true, expr_false) => {
             let space_needed_for_branches = std::cmp::max(
                 rbx_storage_stack_space_needed(expr_true),
@@ -247,22 +239,12 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
                 space_needed_for_branches,
             )
         }
-        Expr::RepeatUntil(expr_guard, expr_loop_body) => std::cmp::max(
-            rbx_storage_stack_space_needed(expr_loop_body),
-            SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr_guard),
-        ),
-        Expr::Set(_, expr) => SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr),
-        Expr::SetField(_, _, expr) => SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr),
-        Expr::Block(expr_vec) => {
-            let space_needed_for_block = expr_vec.iter().fold(0, |acc, e| {
-                std::cmp::max(acc, rbx_storage_stack_space_needed(e))
-            });
-
-            space_needed_for_block + SIZE_OF_DWORD
+        Expr::RepeatUntil(expr_guard, expr_loop_body) => {
+            std::cmp::max(
+                rbx_storage_stack_space_needed(expr_loop_body),
+                SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr_guard),
+            )
         }
-        // TODO @mreich: technically carry forward will always be set to true in this AST block,
-        // but should probably explicitly set it to 1 for clarity
-        Expr::RecordInitializer(_, _) => 0,
         Expr::Call(_, args_vec) => {
             let space_needed_for_args = args_vec.iter().fold(0, |acc, e| {
                 std::cmp::max(acc, rbx_storage_stack_space_needed(e))
@@ -270,7 +252,15 @@ fn rbx_storage_stack_space_needed(e: &Expr) -> i32 {
 
             space_needed_for_args + SIZE_OF_DWORD
         }
-        Expr::Lookup(expr, _) => rbx_storage_stack_space_needed(expr) + SIZE_OF_DWORD,
+        Expr::Lookup(expr, _) => {
+            rbx_storage_stack_space_needed(expr) + SIZE_OF_DWORD
+        }
+        Expr::RecordInitializer(_, _) => 0,
+        Expr::SetField(_, _, expr) => {
+            SIZE_OF_DWORD + rbx_storage_stack_space_needed(expr)
+        }
+        // TODO @mreich: technically carry forward will always be set to true in this AST block,
+        // but should probably explicitly set it to 1 for clarity
         Expr::ObjectInitializer(_, _) => 0,
         Expr::CallMethod(_, _, args_vec) => {
             let space_needed_for_args = args_vec.iter().fold(0, |acc, e| {
@@ -323,14 +313,10 @@ fn instr_to_str(i: &Instr) -> String {
         }
         Instr::ICall(fn_name) => format!("call {}", fn_name),
         Instr::IJumpOverflow(fn_name) => format!("jo {}", fn_name),
-        Instr::IAnd(v1, v2) => format!("and {}, {}", val_to_str(v1), val_to_str(v2)),
-        Instr::IPush(v) => format!("push {}", val_to_str(v)),
-        Instr::IPop(v) => format!("pop {}", val_to_str(v)),
         Instr::IRet => "ret".to_string(),
         Instr::IComment(s) => format!("; {}", s),
         Instr::IEnter(n) => format!("enter {}, 0", n),
         Instr::ILeave => "leave".to_string(),
-        Instr::ISyscall => "int 0x80".to_string(),
         Instr::IDq(s) => format!("dq {}", s),
     }
 }
@@ -382,7 +368,7 @@ fn compile_heap_allocated_initializer<T: HeapAllocated>(
     // If this isn't going to be assigned to a variable, we can just ignore the result
     instr_vec.extend(vec![
         Instr::ICmp(Val::Reg(Reg::RBX), Val::Imm(0)),
-        Instr::IJumpEqual(heap_initialize_end_tag.clone()),
+        Instr::IJumpEqual(heap_initialize_end_tag.clone().into()),
     ]);
 
     // Now allocate space for the record itself
@@ -405,17 +391,17 @@ fn compile_heap_allocated_initializer<T: HeapAllocated>(
             Val::Reg(Reg::R11),
             Val::RegOffset(Reg::R12, MAX_HEAP_SIZE_R12_OFFSET),
         ),
-        Instr::IJumpLess(heap_check_end_tag.to_string()),
-        Instr::ICall("out_of_memory_error".to_string()),
-        Instr::ITag(heap_check_end_tag),
+        Instr::IJumpLess(heap_check_end_tag.clone().into()),
+        Instr::ICall("out_of_memory_error".into()),
+        Instr::ITag(heap_check_end_tag.into()),
     ]);
 
     // Allocate space for the item
     instr_vec.extend(vec![
         Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(n_bytes)),
-        Instr::ICall("malloc".to_string()),
+        Instr::ICall("malloc".into()),
         Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)),
-        Instr::IJumpEqual("out_of_memory_error".to_string()),
+        Instr::IJumpEqual("out_of_memory_error".into()),
     ]);
 
     // Move rax into temporary stack place
@@ -426,7 +412,7 @@ fn compile_heap_allocated_initializer<T: HeapAllocated>(
     instr_vec.push(Instr::IMov(Val::RegOffset(Reg::RAX, 0), Val::Imm(1)));
 
     for (i, (field_expr, field_data)) in zip(fields, e.field_types()).into_iter().enumerate() {
-        let field_type_eval = compile_to_instrs(field_expr, ctx, instr_vec, program);
+        let field_type_eval = compile_expr(field_expr, ctx, instr_vec, program);
 
         if !program.expr_a_subtypes_b(&field_type_eval, &field_data.1) {
             panic!(
@@ -453,7 +439,7 @@ fn compile_heap_allocated_initializer<T: HeapAllocated>(
         Val::RegOffset(Reg::RBP, rbp_offset_ptr_eval),
     ));
 
-    instr_vec.push(Instr::ITag(heap_initialize_end_tag));
+    instr_vec.push(Instr::ITag(heap_initialize_end_tag.into()));
 }
 
 fn compile_heap_allocated_set_field<T: HeapAllocated>(
@@ -473,7 +459,7 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
     if let Some(idx) = field_index {
         // Evalulate the new field expression
         ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
-        let return_type_field_expr = compile_to_instrs(rhs_field_expr, ctx, instr_vec, program);
+        let return_type_field_expr = compile_expr(rhs_field_expr, ctx, instr_vec, program);
         ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
         let rbp_offset_field_expr_eval = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
@@ -497,7 +483,7 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
                     Val::Reg(Reg::RDI),
                     Val::RegOffset(Reg::RBP, rbp_offset_field_expr_eval),
                 ),
-                Instr::ICall("rc_incr".to_string()),
+                Instr::ICall("rc_incr".into()),
             ]);
 
             let field_heap_allocated_type =
@@ -513,7 +499,7 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
                         ((idx as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
                     ),
                 ),
-                Instr::ICall(format!("{}_record_rc_decr", field_heap_allocated_type)),
+                Instr::ICall(format!("{}_record_rc_decr", field_heap_allocated_type).into()),
             ]);
         }
 
@@ -574,7 +560,7 @@ fn compile_heap_allocated_lookup_field<T: HeapAllocated>(
                 Val::Reg(Reg::RDI),
                 Val::RegOffset(Reg::RBP, field_eval_offset),
             ));
-            instr_vec.push(Instr::ICall("rc_incr".to_string()));
+            instr_vec.push(Instr::ICall("rc_incr".into()));
         }
 
         // // Decrement the ref count of the record pointer which we're looking up with
@@ -600,40 +586,6 @@ fn compile_heap_allocated_lookup_field<T: HeapAllocated>(
     }
 }
 
-// fn compile_heap_allocated_print(
-//     fields: &Vec<(String, ExprType)>,
-//     instr_vec: &mut Vec<Instr>,
-//     value_offset: usize // offset from start of memory addr that fields start (offset due to ref count / vtable)
-// ) {
-//     // Print open parens
-//     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)));
-//     instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
-
-//     instr_vec.push(Instr::ICall("snek_print".to_string()));
-
-//     for (i, field_expr) in fields.iter().enumerate() {
-//         instr_vec.push(Instr::IMov(
-//             Val::Reg(Reg::RDI),
-//             Val::RegOffset(
-//                 Reg::R10,
-//                 i32::try_from(i + value_offset).unwrap() * SIZE_OF_DWORD,
-//             ),
-//         ));
-//         instr_vec.push(Instr::IMov(
-//             Val::Reg(Reg::RSI),
-//             Val::Imm(field_expr.1.to_type_flag()),
-//         ));
-
-//         instr_vec.push(Instr::ICall("snek_print".to_string()));
-//     }
-
-//     // // print closed parens
-//     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)));
-//     instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
-
-//     instr_vec.push(Instr::ICall("snek_print".to_string()));
-// }
-
 fn compile_function_arguments(
     args: &Vec<Expr>,
     ctx: &mut CompileCtx,
@@ -641,12 +593,11 @@ fn compile_function_arguments(
     program: &Program,
     argument_rsp_offset: i32,
 ) {
-    // let mut arg_evaluation_offsets: Vec<i32> = Vec::new();
     // Track the old carry forward assignment value, temporarily set to 1 for arguments
     ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
 
     for (i, arg_expr) in args.iter().enumerate() {
-        let _arg_type = compile_to_instrs(arg_expr, ctx, instr_vec, program);
+        let _arg_type = compile_expr(arg_expr, ctx, instr_vec, program);
 
         // Push the evaluated arguments onto the stack in the correct order, using the
         // following ordering convention:
@@ -655,33 +606,18 @@ fn compile_function_arguments(
         // [arg 2] 0x10
         // [arg 1] 0x08 <- $rsp
 
-        // let arg_i_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-        // ctx.rbp_offset = arg_i_rbp_offset;
-
-        // arg_evaluation_offsets.push(arg_i_rbp_offset);
-
         instr_vec.push(Instr::IMov(
             Val::RegOffset(Reg::RSP, ((i as i32) + argument_rsp_offset) * SIZE_OF_DWORD),
             Val::Reg(Reg::RAX),
         ));
     }
 
+    // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
     ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
-
-    // for (i, offset) in arg_evaluation_offsets.iter().enumerate() {
-    //     instr_vec.extend(vec![
-    //         // Cut off david's balls and put them in a jar and then put them in a jar and also put them in a jar
-    //         Instr::IMov(Val::Reg(Reg::R11), Val::RegOffset(Reg::RBP, *offset)),
-    //         Instr::IMov(
-    //             Val::RegOffset(Reg::RSP, i32::try_from(i).unwrap() * SIZE_OF_DWORD),
-    //             Val::Reg(Reg::R11),
-    //         ),
-    //     ]);
-    // }
 }
 
 /// Compile an expression to a vector of x86-64 assembly instructions
-fn compile_to_instrs(
+fn compile_expr(
     e: &Expr,
     ctx: &mut CompileCtx,
     instr_vec: &mut Vec<Instr>,
@@ -712,7 +648,7 @@ fn compile_to_instrs(
                 if e_type.is_heap_allocated() {
                     instr_vec.extend(vec![
                         Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)),
-                        Instr::ICall("rc_incr".to_string()),
+                        Instr::ICall("rc_incr".into()),
                     ]);
                 }
 
@@ -728,7 +664,7 @@ fn compile_to_instrs(
             }
         },
         Expr::UnOp(op, e) => {
-            let e_type = compile_to_instrs(e, ctx, instr_vec, program);
+            let e_type = compile_expr(e, ctx, instr_vec, program);
 
             match op {
                 Op1::Print => {
@@ -750,7 +686,6 @@ fn compile_to_instrs(
 
                         instr_vec.push(Instr::ICall("snek_print".into()));
                         instr_vec.extend(PRINT_NEWLINE);
-                        instr_vec.push(Instr::ICall("snek_print".into()));
                     }
 
                     // Print statements should evaluate to the given printed value
@@ -824,7 +759,7 @@ fn compile_to_instrs(
                         _ => unreachable!(),
                     }
 
-                    instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
+                    instr_vec.push(Instr::IJumpOverflow("overflow_error".into()));
                 }
             };
 
@@ -832,12 +767,12 @@ fn compile_to_instrs(
         }
         Expr::BinOp(op, e1, e2) => {
             // Compile e2 first so that subtraction works nicely, leaves e1 in rax
-            let e2_type = compile_to_instrs(e2, ctx, instr_vec, program);
+            let e2_type = compile_expr(e2, ctx, instr_vec, program);
             let rbp_offset_e2_eval = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = rbp_offset_e2_eval;
 
             // Then compile e1, which will be left in rax
-            let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
+            let e1_type = compile_expr(e1, ctx, instr_vec, program);
 
             match op {
                 Op2::Equal => {
@@ -914,7 +849,7 @@ fn compile_to_instrs(
                     _ => unreachable!(),
                 }
 
-                instr_vec.push(Instr::IJumpOverflow("overflow_error".to_string()));
+                instr_vec.push(Instr::IJumpOverflow("overflow_error".into()));
                 ExprType::Number
             } else {
                 panic!("Invalid binary operation {:?}", op);
@@ -923,7 +858,7 @@ fn compile_to_instrs(
             ret_type
         }
         Expr::Let(bindings, e) => {
-            instr_vec.push(Instr::IComment("Let expression".to_string()));
+            instr_vec.push(Instr::IComment("Let expression".into()));
             let original_scope = ctx.scope.clone();
 
             // Add the bindings from the scope
@@ -933,7 +868,7 @@ fn compile_to_instrs(
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
 
             for (var_name, var_e) in bindings {
-                let var_e_type = compile_to_instrs(var_e, ctx, instr_vec, program);
+                let var_e_type = compile_expr(var_e, ctx, instr_vec, program);
 
                 // Save the evaluated value of the variable on the stack
                 ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
@@ -952,7 +887,7 @@ fn compile_to_instrs(
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             // Compile the expression
-            let e_type = compile_to_instrs(e, ctx, instr_vec, program);
+            let e_type = compile_expr(e, ctx, instr_vec, program);
             ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
 
             // Check for any pointer types in the bindings and decrement the references
@@ -994,7 +929,7 @@ fn compile_to_instrs(
                 let type_name = id_type.extract_heap_allocated_type_name();
 
                 ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, true);
-                let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
+                let e1_type = compile_expr(e1, ctx, instr_vec, program);
                 ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
                 if e1_type != id_type {
@@ -1009,17 +944,17 @@ fn compile_to_instrs(
                 // Decrement the refcount of what `id` was originally pointing to
                 instr_vec.extend(vec![
                     Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, id_offset)),
-                    Instr::ICall(format!("{}_record_rc_decr", type_name)),
+                    Instr::ICall(format!("{}_record_rc_decr", type_name).into()),
                 ]);
 
                 // Move the evaluated value of e1 back into rax
                 instr_vec.extend(vec![
-                    Instr::IComment(format!("Move evaluated value of e1 into place of {}", id)),
+                    Instr::IComment(format!("Move evaluated value of e1 into place of {}", id).into()),
                     Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RBP, e1_eval_offset)),
                 ]);
             } else {
                 // TODO @dkrajews, @mreich: do we need to set rbx = 0 explicitly here?
-                let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
+                let e1_type = compile_expr(e1, ctx, instr_vec, program);
 
                 if e1_type != id_type {
                     panic!(
@@ -1029,7 +964,7 @@ fn compile_to_instrs(
             }
 
             instr_vec.extend(vec![
-                Instr::IComment(format!("Move evaluated value of e1 into place of {}", id)),
+                Instr::IComment(format!("Move evaluated value of e1 into place of {}", id).into()),
                 Instr::IMov(Val::RegOffset(Reg::RBP, id_offset), Val::Reg(Reg::RAX)),
             ]);
 
@@ -1043,11 +978,11 @@ fn compile_to_instrs(
                     // Since the block evalualtes to the last expression, we need to carry forward the assignment
                     // if we're at the last expression in the block; otherwise we say it's false
                     ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
-                    let ret_type = compile_to_instrs(e, ctx, instr_vec, program);
+                    let ret_type = compile_expr(e, ctx, instr_vec, program);
 
                     return ret_type;
                 } else {
-                    compile_to_instrs(e, ctx, instr_vec, program);
+                    compile_expr(e, ctx, instr_vec, program);
                 }
             }
 
@@ -1060,7 +995,7 @@ fn compile_to_instrs(
             // Compile e1 (if condition)
             // Track the old carry forward assignment value, temporarily set to 0 for if condition
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, false);
-            compile_to_instrs(e_condition, ctx, instr_vec, program);
+            compile_expr(e_condition, ctx, instr_vec, program);
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             let rbp_starting_offset_from_condition = ctx.rbp_offset;
@@ -1068,24 +1003,24 @@ fn compile_to_instrs(
 
             // If e1 evaluates to false, go to e3 (false branch)
             instr_vec.push(Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)));
-            instr_vec.push(Instr::IJumpEqual(format!("else{if_stmt_tag_id}")));
+            instr_vec.push(Instr::IJumpEqual(format!("else{if_stmt_tag_id}").into()));
 
             // Compile e2 (true branch)
-            let return_type_true_branch = compile_to_instrs(e_true, ctx, instr_vec, program);
-            instr_vec.push(Instr::IJump(format!("end{if_stmt_tag_id}")));
+            let return_type_true_branch = compile_expr(e_true, ctx, instr_vec, program);
+            instr_vec.push(Instr::IJump(format!("end{if_stmt_tag_id}").into()));
 
             // Compile e3 (false branch)
             ctx.rbp_offset = rbp_starting_offset_from_condition;
             ctx.rbx_offset = rbx_starting_offset_from_condition;
 
-            instr_vec.push(Instr::ITag(format!("else{if_stmt_tag_id}")));
-            let return_type_false_branch = compile_to_instrs(e_false, ctx, instr_vec, program);
+            instr_vec.push(Instr::ITag(format!("else{if_stmt_tag_id}").into()));
+            let return_type_false_branch = compile_expr(e_false, ctx, instr_vec, program);
 
             if return_type_true_branch != return_type_false_branch {
                 panic!("Type mismatch in if-else branches, got {return_type_true_branch:?} and {return_type_false_branch:?}");
             }
 
-            instr_vec.push(Instr::ITag(format!("end{if_stmt_tag_id}")));
+            instr_vec.push(Instr::ITag(format!("end{if_stmt_tag_id}").into()));
 
             return_type_true_branch
         }
@@ -1093,23 +1028,23 @@ fn compile_to_instrs(
             let loop_tag_id = ctx.tag_id;
             ctx.tag_id += 1;
 
-            instr_vec.push(Instr::ITag(format!("loop{loop_tag_id}")));
+            instr_vec.push(Instr::ITag(format!("loop{loop_tag_id}").into()));
 
             // Compile e1 (loop body)
-            let return_type_loop_body = compile_to_instrs(e1, ctx, instr_vec, program);
+            let return_type_loop_body = compile_expr(e1, ctx, instr_vec, program);
             let rbp_offset_loop_body_e = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = rbp_offset_loop_body_e;
 
             // Compile e2 (loop condition)
             // Track the old carry forward assignment value, temporarily set to 0 for loop guard
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, false);
-            compile_to_instrs(e2, ctx, instr_vec, program);
+            compile_expr(e2, ctx, instr_vec, program);
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             // If e2 returned false, jump back to top of loop
             instr_vec.extend(vec![
                 Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)),
-                Instr::IJumpEqual(format!("loop{loop_tag_id}")),
+                Instr::IJumpEqual(format!("loop{loop_tag_id}").into()),
             ]);
 
             instr_vec.push(Instr::IMov(
@@ -1120,7 +1055,7 @@ fn compile_to_instrs(
             return_type_loop_body
         }
         Expr::Call(func_name, args) => {
-            instr_vec.push(Instr::IComment("Call expression".to_string()));
+            instr_vec.push(Instr::IComment("Call expression".into()));
 
             let func = program
                 .functions
@@ -1136,21 +1071,19 @@ fn compile_to_instrs(
             compile_function_arguments(args, ctx, instr_vec, program, 0);
 
             // Call the function
-            instr_vec.push(Instr::ICall(func_name.clone()));
+            instr_vec.push(Instr::ICall(func_name.clone().into()));
 
             func.return_type.clone()
         }
         Expr::Lookup(e1, field) => {
-            instr_vec.push(Instr::IComment("Lookup expression".to_string()));
+            instr_vec.push(Instr::IComment("Lookup expression".into()));
             // Track the old carry forward assignment value, temporarily set to 0 for field lookup
             ctx.rbx_offset = push_rbx_and_set_carry_forward(instr_vec, ctx.rbx_offset, false);
-            let e1_type = compile_to_instrs(e1, ctx, instr_vec, program);
+            let e1_type = compile_expr(e1, ctx, instr_vec, program);
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
 
             let e1_addr_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = e1_addr_offset;
-
-            println!("!!!! trying to compile lookup on {:?}", e1);
 
             if let ExprType::RecordPointer(record_name) = e1_type {
                 let record = program
@@ -1171,7 +1104,7 @@ fn compile_to_instrs(
         Expr::RecordInitializer(record_name, fields) => {
             instr_vec.push(Instr::IComment(format!(
                 "Begin record initialization for record type {record_name}",
-            )));
+            ).into()));
 
             let signature = program
                 .records
@@ -1189,7 +1122,7 @@ fn compile_to_instrs(
 
             instr_vec.push(Instr::IComment(format!(
                 "End record initialization for record type {record_name}",
-            )));
+            ).into()));
 
             ExprType::RecordPointer(record_name.clone())
         }
@@ -1237,7 +1170,7 @@ fn compile_to_instrs(
         Expr::ObjectInitializer(class_name, fields) => {
             instr_vec.push(Instr::IComment(format!(
                 "Begin initialization for object type {class_name}",
-            )));
+            ).into()));
 
             let class = program
                 .classes
@@ -1262,7 +1195,7 @@ fn compile_to_instrs(
 
             instr_vec.push(Instr::IComment(format!(
                 "End object initialization for object type {class_name}",
-            )));
+            ).into()));
 
             ExprType::ObjectPointer(class_name.clone())
         }
@@ -1274,7 +1207,7 @@ fn compile_to_instrs(
             // let rbp_offset_pre_arg_eval = ctx.rbp_offset;
 
             // Compile first argument and ensure it points to an object
-            let (obj_id_offset, obj_id_type) = ctx
+            let (_, obj_id_type) = ctx
                 .scope
                 .get(obj_id)
                 .expect("Class not found in scope during set expression")
@@ -1368,7 +1301,7 @@ fn compile_to_instrs(
                             (*vtable_idx as i32) * SIZE_OF_DWORD
                         )),
                     ),
-                    Instr::ICall(reg_to_str(&Reg::R11)),
+                    Instr::ICall(reg_to_str(&Reg::R11).into()),
                 ]);
                 // instr_vec.push(Instr::IMov(Val::Reg(Reg::R11), Val::LabelPointer(format!("[{}_VTable+{}]", class_name, (vtable_idx.0 as i32) * SIZE_OF_DWORD))));
 
@@ -1433,7 +1366,7 @@ fn compile_function_to_instrs(
     }
 
     // Compile the function body
-    let ret = compile_to_instrs(&func.body, ctx, instr_vec, program);
+    let ret = compile_expr(&func.body, ctx, instr_vec, program);
 
     // Only try to decrement record arguments if there are any to avoid useless move instruction
     if func.arg_types.iter().any(|(_, t)| {
@@ -1451,7 +1384,7 @@ fn compile_function_to_instrs(
                     Instr::ICall(format!(
                         "{}_record_rc_decr",
                         arg.1.extract_heap_allocated_type_name()
-                    )),
+                    ).into()),
                 ]);
             }
         }
@@ -1514,10 +1447,10 @@ fn compile_main_expr_to_instrs(
     ctx.scope
         .insert("input".to_string(), (ctx.rbp_offset, ExprType::Number));
 
-    let ret = compile_to_instrs(expr, ctx, instr_vec, program);
+    let ret = compile_expr(expr, ctx, instr_vec, program);
 
     // Call print function with final result
-    instr_vec.push(Instr::IComment("Print final result".to_string()));
+    instr_vec.push(Instr::IComment("Print final result".into()));
     if ret.is_heap_allocated() {
         let type_name = ret.extract_heap_allocated_type_name();
         let stringified_name_label = format_stringified_heap_name(&type_name);
@@ -1546,11 +1479,11 @@ fn compile_main_expr_to_instrs(
     }
 
     // TODO @dkrajews: make this support printing records
-    instr_vec.push(Instr::ICall("snek_print".to_string()));
+    instr_vec.push(Instr::ICall("snek_print".into()));
 
     // Restore RBX, R12
     instr_vec.extend(vec![
-        Instr::IComment("Restore RBX, R12 after main fn body".to_string()),
+        Instr::IComment("Restore RBX, R12 after main fn body".into()),
         Instr::IMov(
             Val::Reg(Reg::RBX),
             Val::RegOffset(Reg::RBP, old_rbx_rbp_offset),
@@ -1576,15 +1509,15 @@ fn compile_heap_rc_decr_function_to_instrs(e: &dyn HeapAllocated, instr_vec: &mu
     // Perform null check on the record pointer
     instr_vec.extend(vec![
         Instr::ICmp(Val::Reg(Reg::RDI), Val::Imm(0)),
-        Instr::IJumpEqual(format!("{}_record_rc_decr_end", e.name())),
+        Instr::IJumpEqual(format!("{}_record_rc_decr_end", e.name()).into()),
     ]);
 
     // Decrement the refcount by 1 and check if it hits zero
     instr_vec.extend(vec![
-        Instr::IComment("Decrement refcount by 1, compare to 0".to_string()),
+        Instr::IComment("Decrement refcount by 1, compare to 0".to_string().into()),
         Instr::ISub(Val::RegOffset(Reg::RDI, 0), Val::Imm(1)),
         Instr::ICmp(Val::RegOffset(Reg::RDI, 0), Val::Imm(0)),
-        Instr::IJumpNotEqual(format!("{}_record_rc_decr_end", e.name())),
+        Instr::IJumpNotEqual(format!("{}_record_rc_decr_end", e.name()).into()),
     ]);
 
     for (i, (field_name, field_type)) in e.field_types().iter().enumerate() {
@@ -1592,7 +1525,7 @@ fn compile_heap_rc_decr_function_to_instrs(e: &dyn HeapAllocated, instr_vec: &mu
             ExprType::RecordPointer(type_name) | ExprType::ObjectPointer(type_name) => {
                 instr_vec.push(Instr::IComment(format!(
                     "Decrement refcount of field {field_name}"
-                )));
+                ).into()));
                 instr_vec.extend(vec![
                     // Load the address of the record struct into R11
                     Instr::IMov(
@@ -1607,7 +1540,7 @@ fn compile_heap_rc_decr_function_to_instrs(e: &dyn HeapAllocated, instr_vec: &mu
                             ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
                         ),
                     ),
-                    Instr::ICall(format!("{type_name}_record_rc_decr")),
+                    Instr::ICall(format!("{type_name}_record_rc_decr").into()),
                 ]);
             }
             _ => continue,
@@ -1638,7 +1571,7 @@ fn compile_heap_rc_decr_function_to_instrs(e: &dyn HeapAllocated, instr_vec: &mu
             Val::Reg(Reg::RDI),
             Val::RegOffset(Reg::RBP, record_addr_offset),
         ),
-        Instr::ICall("free".to_string()), // Free the record struct
+        Instr::ICall("free".into()), // Free the record struct
     ]);
 
     let n_bytes = e.alloc_size();
@@ -1649,7 +1582,7 @@ fn compile_heap_rc_decr_function_to_instrs(e: &dyn HeapAllocated, instr_vec: &mu
         Val::Imm(n_bytes),
     ));
 
-    instr_vec.push(Instr::ITag(format!("{}_record_rc_decr_end", e.name())));
+    instr_vec.push(Instr::ITag(format!("{}_record_rc_decr_end", e.name()).into()));
 
     instr_vec.extend(FUNCTION_EPILOGUE);
 }
@@ -1680,11 +1613,10 @@ fn compile_heap_print_function(e: &dyn HeapAllocated, instr_vec: &mut Vec<Instr>
             Val::LabelPointer(stringified_name_label),
         ),
         Instr::ICall("snek_print".into()),
-        Instr::IJumpEqual(format!("{}_print_end", type_name)),
+        Instr::IJumpEqual(format!("{}_print_end", type_name).into()),
     ]);
 
     instr_vec.extend(PRINT_OPEN_PARENS);
-    instr_vec.push(Instr::ICall("snek_print".into()));
 
     for (i, (_, field_type)) in fields.iter().enumerate() {
         place_args_in_rdi_rsi(
@@ -1716,16 +1648,14 @@ fn compile_heap_print_function(e: &dyn HeapAllocated, instr_vec: &mut Vec<Instr>
     }
 
     instr_vec.extend(PRINT_CLOSED_PARENS);
-    instr_vec.push(Instr::ICall("snek_print".into()));
     instr_vec.extend(PRINT_NEWLINE);
-    instr_vec.push(Instr::ICall("snek_print".into()));
 
-    instr_vec.push(Instr::ITag(format!("{}_print_end", type_name)));
+    instr_vec.push(Instr::ITag(format!("{}_print_end", type_name).into()));
     instr_vec.extend(FUNCTION_EPILOGUE);
 }
 
 fn compile_class_vtable(class: &Class, instr_vec: &mut Vec<Instr>) {
-    let mut vtable_indices = vec![Instr::IDq("NULL".to_string()); class.vtable_indices.len()];
+    let mut vtable_indices = vec![Instr::IDq("NULL".into()); class.vtable_indices.len()];
 
     for (method_name, (vtable_idx, method_owner_class)) in class.vtable_indices.iter() {
         println!(
@@ -1733,7 +1663,7 @@ fn compile_class_vtable(class: &Class, instr_vec: &mut Vec<Instr>) {
             method_name, method_owner_class, *vtable_idx
         );
         vtable_indices[*vtable_idx] =
-            Instr::IDq(format_vtable_label(method_name, method_owner_class));
+            Instr::IDq(format_vtable_label(method_name, method_owner_class).into());
     }
 
     instr_vec.extend(vtable_indices);
