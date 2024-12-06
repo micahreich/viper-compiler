@@ -16,10 +16,7 @@ pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -24;
 
 pub const BASE_CLASS_NAME: &str = "Object";
 
-pub const FUNCTION_EPILOGUE: [Instr; 2] = [
-    Instr::ILeave,
-    Instr::IRet
-];
+pub const FUNCTION_EPILOGUE: [Instr; 2] = [Instr::ILeave, Instr::IRet];
 
 pub const PRINT_OPEN_PARENS: [Instr; 2] = [
     Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)),
@@ -58,7 +55,7 @@ pub const RESERVED_KEYWORDS: [&str; 20] = [
     "sub1",
     "lookup",
     "input",
-    "__tmp"
+    "__tmp",
 ];
 
 #[derive(Debug, Clone)]
@@ -148,12 +145,10 @@ pub enum Expr {
     Block(Vec<Expr>),
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
-    Call(String, Vec<Expr>), // this is for calling non object functions
+    Call(String, Vec<Expr>),              // this is for calling non object functions
     CallMethod(String, String, Vec<Expr>), // this is for calling object methods
-    Lookup(Box<Expr>, String), // recordpointer, fieldname
+    Lookup(Box<Expr>, String),            // recordpointer, fieldname
 }
-
-
 
 #[repr(i32)] // Specify the representation
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -222,7 +217,7 @@ impl HeapAllocated for Record {
     fn name(&self) -> &String {
         &self.name
     }
-    
+
     fn field_types(&self) -> &Vec<(String, ExprType)> {
         &self.field_types
     }
@@ -277,7 +272,7 @@ impl HeapAllocated for Class {
     fn name(&self) -> &String {
         &self.name
     }
-    
+
     fn field_types(&self) -> &Vec<(String, ExprType)> {
         &self.field_types
     }
@@ -315,16 +310,17 @@ impl Program {
         if class_a == class_b {
             return true;
         } else {
-            let child_classes = inheritance_graph.get(class_b)
+            let child_classes = inheritance_graph
+                .get(class_b)
                 .expect("Class {class_b} not found in inheritance graph");
-            
+
             for child_class in child_classes {
                 if self.class_a_inherits_from_b(class_a, child_class, inheritance_graph) {
                     return true;
                 }
             }
         }
-    
+
         false
     }
 
