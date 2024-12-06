@@ -3,7 +3,23 @@ use std::iter::zip;
 
 use crate::types::*;
 
+const N_SPACES_ASM_INDENTATION: usize = 2;
+
 // Helper functions for simplifying common x86/stack behaviors
+fn format_vtable_label(method_name: &String, method_class_owner_name: &String) -> String {
+    format!("__{method_class_owner_name}_{method_name}")
+}
+
+fn format_stringified_heap_name(name: &String) -> String {
+    format!("__{name}_heapobj_string")
+}
+
+fn place_args_in_rdi_rsi(instr_vec: &mut Vec<Instr>, rdi: Val, rsi: Val) {
+    instr_vec.extend(vec![
+        Instr::IMov(Val::Reg(Reg::RDI), rdi),
+        Instr::IMov(Val::Reg(Reg::RSI), rsi),
+    ]);
+}
 
 /// Push the value of a register to the stack at the given offset from RBP and return the new offset
 fn push_reg_to_stack(instr_vec: &mut Vec<Instr>, rbp_offset: i32, reg: Reg) -> i32 {
@@ -89,25 +105,29 @@ fn stack_space_needed(e: &Expr) -> i32 {
             match op1 {
                 Op1::Print => {
                     stack_space_needed(e) + // Evaluate the expression to be printed
-                    2 * SIZE_OF_DWORD // Save RAX on the stack to restore after print call
-                }
+                    1 * SIZE_OF_DWORD // Save RAX on the stack to restore after print call
+            }
                 _ => stack_space_needed(e),
             }
         }
         Expr::BinOp(_, e1, e2) => {
             // For binary operations, we need to push the result of e2 to the stack
-            SIZE_OF_DWORD + stack_space_needed(e1) + stack_space_needed(e2)
+            SIZE_OF_DWORD + std::cmp::max(
+                stack_space_needed(e1),
+                stack_space_needed(e2)
+            )
         }
         Expr::Let(bindings, e) => {
             // We push the evaluation of each binding to the stack
-            let mut space_needed = 0;
+            let space_needed_for_bindings = SIZE_OF_DWORD * bindings.len() as i32;
+            let space_needed_for_bindings_eval = bindings.iter().fold(0, |acc, (_, binding_expr)| {
+                std::cmp::max(acc, stack_space_needed(binding_expr))
+            });
 
-            for (_, binding_e) in bindings {
-                space_needed += stack_space_needed(binding_e);
-                space_needed += SIZE_OF_DWORD;
-            }
-
-            space_needed + // Space needed for bindings eval + storage
+            std::cmp::max(
+                space_needed_for_bindings,
+                space_needed_for_bindings_eval
+            ) +
             stack_space_needed(e) + // Space needed for let body expression
             1 * SIZE_OF_DWORD // Space needed to temporarily store body eval
         }
@@ -346,14 +366,14 @@ fn compile_heap_allocated_initializer<T: HeapAllocated>(
             Val::RegOffset(Reg::R12, MAX_HEAP_SIZE_R12_OFFSET),
         ),
         Instr::IJumpLess(heap_check_end_tag.to_string()),
-        Instr::ICall("out_of_memory_error".to_string()),
+        Instr::ICall("out_of_memory_error".into()),
         Instr::ITag(heap_check_end_tag),
     ]);
 
     // Allocate space for the item
     instr_vec.extend(vec![
         Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(n_bytes)),
-        Instr::ICall("malloc".to_string()),
+        Instr::ICall("malloc".into()),
         Instr::ICmp(Val::Reg(Reg::RAX), Val::Imm(0)),
         Instr::IJumpEqual("out_of_memory_error".to_string()),
     ]);
@@ -440,7 +460,7 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
                     Val::Reg(Reg::RDI),
                     Val::RegOffset(Reg::RBP, rbp_offset_field_expr_eval),
                 ),
-                Instr::ICall("rc_incr".to_string()),
+                Instr::ICall("rc_incr".into()),
             ]);
             
             let field_heap_allocated_type = expected_return_type_field_expr.extract_heap_allocated_type_name();
@@ -455,7 +475,7 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
                         ((idx as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
                     ),
                 ),
-                Instr::ICall(format!("{}_record_rc_decr", field_heap_allocated_type)),
+                Instr::ICall(format!("{}_record_rc_decr", field_heap_allocated_type).into()),
             ]);
         }
 
@@ -516,14 +536,14 @@ fn compile_heap_allocated_lookup_field<T: HeapAllocated>(
                 Val::Reg(Reg::RDI),
                 Val::RegOffset(Reg::RBP, field_eval_offset),
             ));
-            instr_vec.push(Instr::ICall("rc_incr".to_string()));
+            instr_vec.push(Instr::ICall("rc_incr".into()));
         }
 
         // Decrement the ref count of the record pointer which we're looking up with
         // after the temporary increment from earlier
         instr_vec.extend(vec![
             Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, e1_addr_offset)),
-            Instr::ICall(format!("{}_record_rc_decr", e.name())),
+            Instr::ICall(format!("{}_record_rc_decr", e.name()).into()),
         ]);
 
         // Move the evaluated field value into rax
@@ -542,39 +562,64 @@ fn compile_heap_allocated_lookup_field<T: HeapAllocated>(
 }
 
 
-fn compile_heap_allocated_print(
-    fields: &Vec<(String, ExprType)>,
-    instr_vec: &mut Vec<Instr>,
-    value_offset: usize // offset from start of memory addr that fields start (offset due to ref count / vtable)
-) {
-    // Print open parens
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)));
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
+// fn compile_heap_allocated_print<T: HeapAllocated>(
+//     e: &T,
+//     instr_vec: &mut Vec<Instr>,
+// ) {
+//     // Print open parens
+//     // instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)));
+//     // instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
 
-    instr_vec.push(Instr::ICall("snek_print".to_string()));
+//     // instr_vec.push(Instr::ICall("snek_print".to_string()));
+//     instr_vec.extend(PRINT_OPEN_PARENS);
 
-    for (i, field_expr) in fields.iter().enumerate() {
-        instr_vec.push(Instr::IMov(
-            Val::Reg(Reg::RDI),
-            Val::RegOffset(
-                Reg::R10,
-                i32::try_from(i + value_offset).unwrap() * SIZE_OF_DWORD,
-            ),
-        ));
-        instr_vec.push(Instr::IMov(
-            Val::Reg(Reg::RSI),
-            Val::Imm(field_expr.1.to_type_flag()),
-        ));
+//     let fields = e.field_types();
 
-        instr_vec.push(Instr::ICall("snek_print".to_string()));
-    }
+//     for (i, (field_name, field_type)) in fields.iter().enumerate() {
+//         if field_type.is_heap_allocated() {
+//             let name = field_type.extract_heap_allocated_type_name();
+//             let stringified_name_label = format_stringified_heap_name(&name);
 
-    // // print closed parens
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)));
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
+//             instr_vec.push(Instr::IMov(
+//                 Val::Reg(Reg::RDI),
+//                 Val::LabelPointer(stringified_name_label),
+//             ));
+//         } else {
+//             instr_vec.push(Instr::IMov(
+//                 Val::Reg(Reg::RDI),
+//                 Val::RegOffset(
+//                     Reg::R10,
+//                     ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
+//                 ),
+//             ));
+//         }
 
-    instr_vec.push(Instr::ICall("snek_print".to_string()));
-}
+//         instr_vec.push(Instr::IMov(
+//             Val::Reg(Reg::RSI),
+//             Val::Imm(field_type.to_type_flag()),
+//         ));
+        
+//         // instr_vec.push(Instr::IMov(
+//         //     Val::Reg(Reg::RDI),
+//         //     Val::RegOffset(
+//         //         Reg::R10,
+//         //         ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
+//         //     ),
+//         // ));
+//         // instr_vec.push(Instr::IMov(
+//         //     Val::Reg(Reg::RSI),
+//         //     Val::Imm(field_type.to_type_flag()),
+//         // ));
+
+//         instr_vec.push(Instr::ICall("snek_print".into()));
+//     }
+
+//     // // print closed parens
+//     instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)));
+//     instr_vec.push(Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(5)));
+
+//     instr_vec.push(Instr::ICall("snek_print".into()));
+// }
 
 fn compile_function_arguments(
     args: &Vec<Expr>,
@@ -645,7 +690,7 @@ fn compile_to_instrs(
                 if e_type.is_heap_allocated() {
                     instr_vec.extend(vec![
                         Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)),
-                        Instr::ICall("rc_incr".to_string()),
+                        Instr::ICall("rc_incr".into()),
                     ]);
                 }
 
@@ -665,60 +710,58 @@ fn compile_to_instrs(
 
             match op {
                 Op1::Print => {
-                    if let ExprType::RecordPointer(name) = &e_type {
-                        let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                        ctx.rbp_offset = e_rbp_offset;
+                    let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
+                    ctx.rbp_offset = e_rbp_offset;
 
-                        let record_def = program
-                            .records
-                            .get(name)
-                            .expect("Record definition not found");
-
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
-
-                        compile_heap_allocated_print(&record_def.field_types, instr_vec, 1);
-
-                        // // Print statements should evaluate to the given value
-                        instr_vec.push(Instr::IMov(
-                            Val::Reg(Reg::RAX),
-                            Val::RegOffset(Reg::RBP, e_rbp_offset),
-                        ));
-                    } else if let ExprType::ObjectPointer(name) = &e_type {
-                        let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                        ctx.rbp_offset = e_rbp_offset;
-
-                        let class_def = program
-                            .classes
-                            .get(name)
-                            .expect("Record definition not found");
-
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
-
-                        compile_heap_allocated_print(&class_def.field_types, instr_vec, 2);
-
-                        // // Print statements should evaluate to the given value
-                        instr_vec.push(Instr::IMov(
-                            Val::Reg(Reg::RAX),
-                            Val::RegOffset(Reg::RBP, e_rbp_offset),
-                        ));
+                    if e_type.is_heap_allocated() {
+                        let e_type_name = e_type.extract_heap_allocated_type_name();
+                        instr_vec.extend(vec![
+                            Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)),
+                            Instr::ICall(format!("{}_print", e_type_name).into())
+                        ]);
                     } else {
-                        let e_rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
-                        ctx.rbp_offset = e_rbp_offset;
-
-                        instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-                        instr_vec.push(Instr::IMov(
-                            Val::Reg(Reg::RSI),
-                            Val::Imm(e_type.to_type_flag()),
-                        ));
-
-                        instr_vec.push(Instr::ICall("snek_print".to_string()));
-
-                        // Print statements should evaluate to the given printed value
-                        instr_vec.push(Instr::IMov(
-                            Val::Reg(Reg::RAX),
-                            Val::RegOffset(Reg::RBP, e_rbp_offset),
-                        ));
+                        place_args_in_rdi_rsi(instr_vec, Val::Reg(Reg::RAX), Val::Imm(e_type.to_type_flag()));
+                        
+                        instr_vec.push(Instr::ICall("snek_print".into()));
+                        instr_vec.extend(PRINT_NEWLINE);
                     }
+
+                    // Print statements should evaluate to the given printed value
+                    instr_vec.push(Instr::IMov(
+                        Val::Reg(Reg::RAX),
+                        Val::RegOffset(Reg::RBP, e_rbp_offset),
+                    ));
+
+                    // if let ExprType::RecordPointer(name) = &e_type {
+                    //     let record_def = program
+                    //         .records
+                    //         .get(name)
+                    //         .expect("Record definition not found");
+
+                    //     instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
+
+                    //     compile_heap_allocated_print(record_def, instr_vec);
+
+                    //     // Print statements should evaluate to the given value
+                    //     instr_vec.push(Instr::IMov(
+                    //         Val::Reg(Reg::RAX),
+                    //         Val::RegOffset(Reg::RBP, e_rbp_offset),
+                    //     ));
+                    // } else if let ExprType::ObjectPointer(name) = &e_type {
+                    //     let class_def = program
+                    //         .classes
+                    //         .get(name)
+                    //         .expect("Record definition not found");
+
+                    //     instr_vec.push(Instr::IMov(Val::Reg(Reg::R10), Val::Reg(Reg::RAX)));
+
+                    //     compile_heap_allocated_print(class_def, instr_vec);
+
+                    //     // Print statements should evaluate to the given value
+                    //     instr_vec.push(Instr::IMov(
+                    //         Val::Reg(Reg::RAX),
+                    //         Val::RegOffset(Reg::RBP, e_rbp_offset),
+                    //     ));
                 }
                 x => {
                     if e_type != ExprType::Number {
@@ -738,11 +781,17 @@ fn compile_to_instrs(
         }
         Expr::BinOp(op, e1, e2) => {
             // Compile e2 first so that subtraction works nicely, leaves e1 in rax
+            let rbp_offset_pre_e2_eval = ctx.rbp_offset;
+
             let e2_type = compile_to_instrs(e2, ctx, instr_vec, program);
+            ctx.rbp_offset = rbp_offset_pre_e2_eval;
+
             let rbp_offset_e2_eval = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
             ctx.rbp_offset = rbp_offset_e2_eval;
 
+            let rbp_offset_pre_e1_eval = ctx.rbp_offset;
             let e1_type = compile_to_instrs(e1, ctx, instr_vec, program); // e1 is in rax
+            ctx.rbp_offset = rbp_offset_pre_e1_eval;
 
             match op {
                 Op2::Equal => {
@@ -759,7 +808,7 @@ fn compile_to_instrs(
                 }
             }
 
-            if matches!(
+            let ret_type = if matches!(
                 op,
                 Op2::Equal | Op2::Less | Op2::LessEqual | Op2::Greater | Op2::GreaterEqual
             ) {
@@ -823,9 +872,15 @@ fn compile_to_instrs(
                 ExprType::Number
             } else {
                 panic!("Invalid binary operation {:?}", op);
-            }
+            };
+
+            // Restore rbp to whatever it was before evaluating everything
+            ctx.rbp_offset = rbp_offset_pre_e2_eval;
+
+            ret_type
         }
         Expr::Let(bindings, e) => {
+            let rbp_offset_pre_eval = ctx.rbp_offset;
             let original_scope = ctx.scope.clone();
 
             // Add the bindings from the scope
@@ -839,7 +894,11 @@ fn compile_to_instrs(
                     panic!("Reserved keyword or invalid identifier used as variable name in let expression: {var_name}");
                 }
 
+                let rbp_offset_pre_var_eval = ctx.rbp_offset;
                 let var_e_type = compile_to_instrs(var_e, ctx, instr_vec, program);
+                ctx.rbp_offset = rbp_offset_pre_var_eval;
+                
+                // Save the evaluated value of the variable on the stack
                 ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
 
                 if newly_created_variable_scope
@@ -847,10 +906,12 @@ fn compile_to_instrs(
                     .is_some()
                 {
                     panic!("Duplicate binding in let expression");
+                } else {
+                    ctx.scope.insert(
+                        var_name.clone(),
+                        (ctx.rbp_offset, var_e_type.clone())
+                    );
                 }
-
-                ctx.scope
-                    .insert(var_name.clone(), (ctx.rbp_offset, var_e_type.clone()));
             }
 
             ctx.rbx_offset = pop_rbx_from_stack(instr_vec, ctx.rbx_offset);
@@ -866,7 +927,7 @@ fn compile_to_instrs(
                         Val::Reg(Reg::RDI),
                         Val::RegOffset(Reg::RBP, *offset),
                     ));
-                    instr_vec.push(Instr::ICall(format!("{}_record_rc_decr", e_type.extract_heap_allocated_type_name())));
+                    instr_vec.push(Instr::ICall(format!("{}_record_rc_decr", e_type.extract_heap_allocated_type_name()).into()));
                 }
             }
 
@@ -878,6 +939,7 @@ fn compile_to_instrs(
 
             // Restore original scope after the let expression is finished
             ctx.scope = original_scope;
+            ctx.rbp_offset = rbp_offset_pre_eval;
 
             e_type
         }
@@ -907,7 +969,7 @@ fn compile_to_instrs(
                 // Decrement the refcount of what `id` was originally pointing to
                 instr_vec.extend(vec![
                     Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, id_offset)),
-                    Instr::ICall(format!("{}_record_rc_decr", type_name)),
+                    Instr::ICall(format!("{}_record_rc_decr", type_name).into()),
                 ]);
 
                 // Move the evaluated value of e1 into the place on the stack where `id` is stored
@@ -1036,7 +1098,7 @@ fn compile_to_instrs(
             ctx.rbp_offset = rbp_offset_pre_arg_eval;
 
             // Call the function
-            instr_vec.push(Instr::ICall(func_name.clone()));
+            instr_vec.push(Instr::ICall(func_name.clone().into()));
 
             func.return_type.clone()
         }
@@ -1244,7 +1306,7 @@ fn compile_to_instrs(
                 ctx.rbp_offset = rbp_offset_pre_arg_eval;
 
                 // Call the function
-                instr_vec.push(Instr::ICall("r11".to_string()));
+                instr_vec.push(Instr::ICall(reg_to_str(&Reg::R11).into()));
 
                 method_signature.return_type.clone()
 
@@ -1258,12 +1320,10 @@ fn compile_to_instrs(
 
 /// Convert a vector of instructions to a string
 fn compile_instrs_to_str(instr_vec: &[Instr]) -> String {
-    const N_SPACES_INDENTATION: usize = 2;
-
     instr_vec
         .iter()
         .map(instr_to_str)
-        .map(|s| format!("{}{}", " ".repeat(N_SPACES_INDENTATION), s))
+        .map(|s| format!("{}{}", " ".repeat(N_SPACES_ASM_INDENTATION), s))
         .collect::<Vec<String>>()
         .join("\n")
 }
@@ -1293,14 +1353,14 @@ fn compile_function_to_instrs(
         total_stack_space_needed_n_bytes,
     )));
 
-    for (i, arg) in func.arg_types.iter().enumerate() {
+    for (i, (arg_name, arg_type)) in func.arg_types.iter().enumerate() {
         let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
         if ctx
             .scope
-            .insert(arg.0.clone(), (arg_rbp_offset, arg.1.clone()))
+            .insert(arg_name.clone(), (arg_rbp_offset, arg_type.clone()))
             .is_some()
         {
-            panic!("Invalid: duplicate parameter {} in function", arg.0);
+            panic!("Invalid: duplicate parameter {} in function", arg_name);
         }
     }
 
@@ -1316,13 +1376,13 @@ fn compile_function_to_instrs(
         let rax_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RAX);
         ctx.rbp_offset = rax_offset;
 
-        for (i, arg) in func.arg_types.iter().enumerate() {
-            if arg.1.is_heap_allocated() {
+        for (i, (arg_name, arg_type)) in func.arg_types.iter().enumerate() {
+            if arg_type.is_heap_allocated() {
                 // Decrement ref counter
-                let arg_rbp_offset = i32::try_from(i + 2).unwrap() * SIZE_OF_DWORD;
+                let arg_rbp_offset = i as i32 * SIZE_OF_DWORD;
                 instr_vec.extend(vec![
                     Instr::IMov(Val::Reg(Reg::RDI), Val::RegOffset(Reg::RBP, arg_rbp_offset)),
-                    Instr::ICall(format!("{}_record_rc_decr", arg.1.extract_heap_allocated_type_name())),
+                    Instr::ICall(format!("{}_record_rc_decr", arg_type.extract_heap_allocated_type_name()).into()),
                 ]);
             }
         }
@@ -1354,30 +1414,38 @@ fn compile_main_expr_to_instrs(
         stack_space_needed_n_bytes + rbx_storage_stack_space_needed_n_bytes;
 
     // Reset parts of the context (need to keep the tag_id as it was before)
-    ctx.rbx_offset = -1 * 4 * SIZE_OF_DWORD;
-    ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
+    // ctx.rbx_offset = -1 * 4 * SIZE_OF_DWORD;
+    // ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
     ctx.scope.clear();
+    ctx.rbx_offset = 0;
+    ctx.rbp_offset = 0;
 
     instr_vec.push(Instr::IEnter(round_up_to_next_multiple_of_16(
         total_stack_space_needed_n_bytes,
     )));
 
     // Store R12 so we can restore it later
-    let old_r12_rbp_offset = push_reg_to_stack(instr_vec, 0, Reg::R12);
+    ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::R12);
+    let old_r12_rbp_offset = ctx.rbp_offset;
 
     // Store current RBP to R12
     instr_vec.push(Instr::IMov(Val::Reg(Reg::R12), Val::Reg(Reg::RBP)));
 
     // Push max heap size to stack (can index with [rbp - 16])
-    let max_heap_size_rbp_offset = push_reg_to_stack(instr_vec, old_r12_rbp_offset, Reg::RSI);
+    ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RSI);
 
     // Push current heap size (0) to stack (can index with [rbp - 24])
-    let curr_heap_size_rbp_offset = push_val_to_stack(instr_vec, max_heap_size_rbp_offset, 0);
+    ctx.rbp_offset = push_val_to_stack(instr_vec, ctx.rbp_offset, 0);
 
     // Store RBX so we can restore it later
-    let old_rbx_rbp_offset = push_reg_to_stack(instr_vec, curr_heap_size_rbp_offset, Reg::RBX);
+    ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RBX);
+    let old_rbx_rbp_offset = ctx.rbp_offset;
 
     instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(0)));
+
+    // Set correct values for rbp, rbx offsets after pushing prelim data
+    ctx.rbx_offset = ctx.rbp_offset;
+    ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
 
     // input: input to the program
     ctx.rbp_offset = push_reg_to_stack(instr_vec, ctx.rbp_offset, Reg::RDI);
@@ -1388,14 +1456,30 @@ fn compile_main_expr_to_instrs(
 
     // Call print function with final result
     instr_vec.push(Instr::IComment("Print final result".to_string()));
-    instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
-    instr_vec.push(Instr::IMov(
-        Val::Reg(Reg::RSI),
-        Val::Imm(ret.to_type_flag()),
-    ));
+    
+    if ret.is_heap_allocated() {
+        // If the final result is a heap-allocated type, we need to call the print function with just the name
+        let type_name = ret.extract_heap_allocated_type_name();
+        let stringified_name_label = format_stringified_heap_name(&type_name);
 
-    // TODO @dkrajews: make this support printing records
-    instr_vec.push(Instr::ICall("snek_print".to_string()));
+        instr_vec.extend(vec![
+            Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(ret.to_type_flag())),
+            Instr::IMov(Val::Reg(Reg::RDI), Val::LabelPointer(stringified_name_label)),
+            Instr::ICall("snek_print".into())
+        ]);
+    } else {
+        place_args_in_rdi_rsi(instr_vec, Val::Reg(Reg::RAX), Val::Imm(ret.to_type_flag()));
+        instr_vec.push(Instr::ICall("snek_print".into()));
+    }
+
+    // instr_vec.push(Instr::IMov(Val::Reg(Reg::RDI), Val::Reg(Reg::RAX)));
+    // instr_vec.push(Instr::IMov(
+    //     Val::Reg(Reg::RSI),
+    //     Val::Imm(ret.to_type_flag()),
+    // ));
+
+    // // TODO @dkrajews: make this support printing records
+    // instr_vec.push(Instr::ICall(("snek_print")));
 
     // Restore RBX, R12
     instr_vec.extend(vec![
@@ -1454,7 +1538,7 @@ fn compile_heap_rc_decr_function_to_instrs(
                         Val::Reg(Reg::RDI),
                         Val::RegOffset(Reg::R11, ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD),
                     ),
-                    Instr::ICall(format!("{type_name}_record_rc_decr")),
+                    Instr::ICall(format!("{type_name}_record_rc_decr").into()),
                 ]);
             }
             _ => continue,
@@ -1485,7 +1569,7 @@ fn compile_heap_rc_decr_function_to_instrs(
             Val::Reg(Reg::RDI),
             Val::RegOffset(Reg::RBP, record_addr_offset),
         ),
-        Instr::ICall("free".to_string()), // Free the record struct
+        Instr::ICall("free".into()), // Free the record struct
     ]);
 
     let n_bytes = e.alloc_size();
@@ -1504,6 +1588,61 @@ fn compile_heap_rc_decr_function_to_instrs(
     instr_vec.extend(FUNCTION_EPILOGUE);
 }
 
+fn compile_heap_print_function(e: &dyn HeapAllocated, instr_vec: &mut Vec<Instr>) {
+    instr_vec.push(Instr::IEnter(0));
+
+    // Move the address of the object/record into R13 (callee-saved)
+    instr_vec.push(Instr::IMov(Val::Reg(Reg::R13), Val::Reg(Reg::RDI)));
+    
+    let type_name = e.name();
+    let fields = e.field_types();
+    let stringified_name_label = format_stringified_heap_name(&type_name);
+
+    instr_vec.extend(vec![
+        Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(ExprType::RecordPointer("".to_string()).to_type_flag())),
+        Instr::IMov(Val::Reg(Reg::R11), Val::Imm(ExprType::NullPtr.to_type_flag())),
+        Instr::ICmp(Val::Reg(Reg::RDI), Val::Imm(0)),
+        Instr::ICMovEqual(Val::Reg(Reg::RSI), Val::Reg(Reg::R11)),
+        Instr::IMov(Val::Reg(Reg::RDI), Val::LabelPointer(stringified_name_label)),
+        Instr::ICall("snek_print".into()),
+        Instr::IJumpEqual(format!("{}_print_end", type_name)),
+    ]);
+    
+    instr_vec.extend(PRINT_OPEN_PARENS);
+
+    for (i, (_, field_type)) in fields.iter().enumerate() {
+        place_args_in_rdi_rsi(
+            instr_vec,
+            Val::RegOffset(
+                Reg::R13,
+                ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD,
+            ),
+            Val::Imm(field_type.to_type_flag()),
+        );
+    
+        if field_type.is_heap_allocated() {
+            let field_type_name = field_type.extract_heap_allocated_type_name();
+            let stringified_name_label = format_stringified_heap_name(&field_type_name);
+
+            instr_vec.extend(vec![
+                Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(field_type.to_type_flag())),
+                Instr::IMov(Val::Reg(Reg::R11), Val::Imm(ExprType::NullPtr.to_type_flag())),
+                Instr::ICmp(Val::Reg(Reg::RDI), Val::Imm(0)),
+                Instr::ICMovEqual(Val::Reg(Reg::RSI), Val::Reg(Reg::R11)),
+                Instr::IMov(Val::Reg(Reg::RDI), Val::LabelPointer(stringified_name_label)),
+            ]);
+        }
+
+        instr_vec.push(Instr::ICall("snek_print".into()));
+    }
+    
+    instr_vec.extend(PRINT_CLOSED_PARENS);
+    instr_vec.extend(PRINT_NEWLINE);
+
+    instr_vec.push(Instr::ITag(format!("{}_print_end", type_name)));
+    instr_vec.extend(FUNCTION_EPILOGUE);
+}
+
 fn compile_class_vtable(
     class: &Class,
     instr_vec: &mut Vec<Instr>,
@@ -1515,7 +1654,7 @@ fn compile_class_vtable(
 
     for (method_name, (vtable_idx, method_owner_class)) in class.vtable_indices.iter() {
         println!("VTable index for method {} in class {}: {}", method_name, method_owner_class, *vtable_idx);
-        vtable_indices[*vtable_idx] = Instr::IDq(format!("__{method_owner_class}_{method_name}"));
+        vtable_indices[*vtable_idx] = Instr::IDq(format_vtable_label(method_name, method_owner_class));
     }
 
     instr_vec.extend(vtable_indices);
@@ -1524,22 +1663,32 @@ fn compile_class_vtable(
 /// Compile a program to a string of x86-64 assembly
 pub fn compile(program: &Program) -> String {
     // Compile all functions to instruction strings
-    let mut asm_string: String = "
-extern snek_print
+    let asm_section_extern = "extern snek_print
 extern snek_error
 extern malloc
-extern free
+extern free".to_string();
 
+    let mut asm_section_data = "
+section .data
+".to_string();
+
+    let mut asm_section_text: String = "
 section .text
 global our_code_starts_here
 
 out_of_memory_error:
+  enter 0, 0
   mov rdi, 4
   call snek_error
+  leave
+  ret
 
 overflow_error:
+  enter 0, 0
   mov rdi, 3
   call snek_error
+  leave
+  ret
 
 rc_incr:
   enter 0, 0
@@ -1554,9 +1703,7 @@ rc_incr:
   rc_incr_end:
   leave
   ret
-
-"
-    .to_string();
+".to_string();
 
     let mut ctx: CompileCtx = CompileCtx {
         scope: VariableScope::new(),
@@ -1577,10 +1724,35 @@ rc_incr:
 
     for signature in heap_allocated_signatures {
         let name = signature.name();
+        
+        // Add the stringified name to the data section
+        let asm_stringified_name = format!(
+            "{}{}\n",
+            " ".repeat(N_SPACES_ASM_INDENTATION),
+            format!("{} db \"{name}\", 0", format_stringified_heap_name(name))
+        );
+
+        asm_section_data += &asm_stringified_name;
+        
+        // Compile the print function for the record/object
+        instr_vec.clear();
+        compile_heap_print_function(signature, &mut instr_vec);
+
+        let asm_print_func_string = format!(
+            "
+{name}_print:
+{}
+",
+            compile_instrs_to_str(&instr_vec)
+        );
+
+        asm_section_text.push_str(&asm_print_func_string);
+
+        // Compile the reference count decrement function for the record/object
         instr_vec.clear();
         compile_heap_rc_decr_function_to_instrs(signature, &mut instr_vec);
 
-        let asm_func_string = format!(
+        let asm_rc_decr_func_string = format!(
             "
 {name}_record_rc_decr:
 {}
@@ -1588,7 +1760,7 @@ rc_incr:
             compile_instrs_to_str(&instr_vec)
         );
 
-        asm_string.push_str(&asm_func_string);
+        asm_section_text.push_str(&asm_rc_decr_func_string);
     }
 
     // Generate assembly for each function body
@@ -1619,7 +1791,7 @@ rc_incr:
             compile_instrs_to_str(&instr_vec)
         );
 
-        asm_string.push_str(&asm_func_string);
+        asm_section_text.push_str(&asm_func_string);
         println!("Finished compilation for {name}");
     }
 
@@ -1629,7 +1801,7 @@ rc_incr:
         instr_vec.clear();
         compile_class_vtable(class, &mut instr_vec);
 
-        let asm_func_string = format!(
+        let asm_vtable_string = format!(
             "
 {class_name}_VTable:
 {}
@@ -1637,12 +1809,12 @@ rc_incr:
             compile_instrs_to_str(&instr_vec)
         );
 
-        asm_string.push_str(&asm_func_string);
+        asm_section_data.push_str(&asm_vtable_string);
     }
 
     // Generate assembly for the main expression
     instr_vec.clear();
-    let eval_return_type = compile_main_expr_to_instrs(&program.main_expr, &mut instr_vec, &mut ctx, program);
+    let _ = compile_main_expr_to_instrs(&program.main_expr, &mut instr_vec, &mut ctx, program);
     let asm_func_string = format!(
         "
 {}:
@@ -1652,7 +1824,8 @@ rc_incr:
         compile_instrs_to_str(&instr_vec)
     );
 
-    asm_string.push_str(&asm_func_string);
+    asm_section_text.push_str(&asm_func_string);
 
+    let asm_string = format!("{}\n{}\n{}", asm_section_extern, asm_section_data, asm_section_text);
     asm_string
 }

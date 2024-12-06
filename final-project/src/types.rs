@@ -3,6 +3,10 @@ use std::str::FromStr;
 use im::{HashMap, HashSet};
 use regex::Regex;
 
+use strum::EnumCount;
+use std::borrow::Cow;
+use strum_macros::EnumCount;
+
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 
 pub type ProgramFunctions = Vec<Function>;
@@ -19,6 +23,23 @@ pub const BASE_CLASS_NAME: &str = "Object";
 pub const FUNCTION_EPILOGUE: [Instr; 2] = [
     Instr::ILeave,
     Instr::IRet
+];
+
+pub const PRINT_OPEN_PARENS: [Instr; 3] = [
+    Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)),
+    Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(1)),
+    Instr::ICall(Cow::Borrowed("snek_print")),
+];
+
+pub const PRINT_CLOSED_PARENS: [Instr; 3] = [
+    Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(1)),
+    Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(1)),
+    Instr::ICall(Cow::Borrowed("snek_print"))
+];
+
+pub const PRINT_NEWLINE: [Instr; 2] = [
+    Instr::IMov(Val::Reg(Reg::RSI), Val::Imm(0)),
+    Instr::ICall(Cow::Borrowed("snek_print"))
 ];
 
 pub const RESERVED_KEYWORDS: [&str; 19] = [
@@ -67,7 +88,7 @@ pub enum Reg {
 }
 
 #[derive(Debug, Clone)]
-pub enum Instr {
+pub enum Instr<'a> {
     IMov(Val, Val),
     IAdd(Val, Val),
     ISub(Val, Val),
@@ -84,7 +105,7 @@ pub enum Instr {
     ICMovLessEqual(Val, Val),
     ICMovGreater(Val, Val),
     ICMovGreaterEqual(Val, Val),
-    ICall(String),
+    ICall(Cow<'a, str>),
     IJumpOverflow(String),
     IPush(Val),
     IPop(Val),
@@ -138,7 +159,7 @@ pub enum Expr {
 
 
 #[repr(i32)] // Specify the representation
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(EnumCount, Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprType {
     Number = 0,
     Boolean = 1,
@@ -150,11 +171,11 @@ pub enum ExprType {
 impl ExprType {
     pub fn to_type_flag(&self) -> i32 {
         match self {
-            ExprType::Number => 0,
-            ExprType::Boolean => 1,
-            ExprType::RecordPointer(_) => 2,
-            ExprType::NullPtr => 4,
-            ExprType::ObjectPointer(_) => 5,
+            ExprType::Number => 2,
+            ExprType::Boolean => 3,
+            ExprType::RecordPointer(_) => 4,
+            ExprType::ObjectPointer(_) => 4,
+            ExprType::NullPtr => 5,
         }
     }
 

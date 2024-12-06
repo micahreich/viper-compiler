@@ -1,0 +1,6 @@
+(record bst_node ((val int) (left bst_node) (right bst_node)))
+
+(let
+    ((root NULL))
+    (print root)
+)
