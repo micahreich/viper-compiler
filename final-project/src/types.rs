@@ -1,16 +1,9 @@
-use std::str::FromStr;
+use std::borrow::Cow;
 
 use im::{HashMap, HashSet};
 use regex::Regex;
 
-use strum::EnumCount;
-use std::borrow::Cow;
-use strum_macros::EnumCount;
-
 pub const MAIN_FN_TAG: &str = "our_code_starts_here";
-
-pub type ProgramFunctions = Vec<Function>;
-pub type ProgramClasses = Vec<Class>;
 
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
 pub const SIZE_OF_DWORD: i32 = 8;
@@ -20,10 +13,7 @@ pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -24;
 
 pub const BASE_CLASS_NAME: &str = "Object";
 
-pub const FUNCTION_EPILOGUE: [Instr; 2] = [
-    Instr::ILeave,
-    Instr::IRet
-];
+pub const FUNCTION_EPILOGUE: [Instr; 2] = [Instr::ILeave, Instr::IRet];
 
 pub const PRINT_OPEN_PARENS: [Instr; 3] = [
     Instr::IMov(Val::Reg(Reg::RDI), Val::Imm(0)),
@@ -42,7 +32,7 @@ pub const PRINT_NEWLINE: [Instr; 2] = [
     Instr::ICall(Cow::Borrowed("snek_print"))
 ];
 
-pub const RESERVED_KEYWORDS: [&str; 19] = [
+pub const RESERVED_KEYWORDS: [&str; 20] = [
     "let",
     "set!",
     "if",
@@ -62,6 +52,7 @@ pub const RESERVED_KEYWORDS: [&str; 19] = [
     "sub1",
     "lookup",
     "input",
+    "__tmp",
 ];
 
 #[derive(Debug, Clone)]
@@ -93,12 +84,11 @@ pub enum Instr<'a> {
     IAdd(Val, Val),
     ISub(Val, Val),
     IMul(Val, Val),
-    IAnd(Val, Val),
-    ITag(String),
-    IJump(String),
-    IJumpEqual(String),
-    IJumpNotEqual(String),
-    IJumpLess(String),
+    ITag(Cow<'a, str>),
+    IJump(Cow<'a, str>),
+    IJumpEqual(Cow<'a, str>),
+    IJumpNotEqual(Cow<'a, str>),
+    IJumpLess(Cow<'a, str>),
     ICmp(Val, Val),
     ICMovEqual(Val, Val),
     ICMovLess(Val, Val),
@@ -106,15 +96,12 @@ pub enum Instr<'a> {
     ICMovGreater(Val, Val),
     ICMovGreaterEqual(Val, Val),
     ICall(Cow<'a, str>),
-    IJumpOverflow(String),
-    IPush(Val),
-    IPop(Val),
+    IJumpOverflow(Cow<'a, str>),
     IRet,
-    IComment(String),
+    IComment(Cow<'a, str>),
     IEnter(i32),
     ILeave,
-    ISyscall,
-    IDq(String),
+    IDq(Cow<'a, str>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -151,15 +138,13 @@ pub enum Expr {
     Block(Vec<Expr>),
     RecordInitializer(String, Vec<Expr>), // acts like a pointer to the record type
     ObjectInitializer(String, Vec<Expr>), // acts like a pointer to the class type
-    Call(String, Vec<Expr>), // this is for calling non object functions
-    CallMethod(Box<Expr>, String, Vec<Expr>), // this is for calling object methods
-    Lookup(Box<Expr>, String), // recordpointer, fieldname
+    Call(String, Vec<Expr>),              // this is for calling non object functions
+    CallMethod(String, String, Vec<Expr>), // this is for calling object methods
+    Lookup(Box<Expr>, String),            // recordpointer, fieldname
 }
 
-
-
 #[repr(i32)] // Specify the representation
-#[derive(EnumCount, Debug, PartialEq, Eq, Clone, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ExprType {
     Number = 0,
     Boolean = 1,
@@ -196,18 +181,6 @@ impl ExprType {
     }
 }
 
-impl FromStr for ExprType {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "int" => Ok(ExprType::Number),
-            "bool" => Ok(ExprType::Boolean),
-            _ => Ok(ExprType::RecordPointer(s.to_string())),
-        }
-    }
-}
-
 pub trait HeapAllocated {
     fn name(&self) -> &String;
     fn field_types(&self) -> &Vec<(String, ExprType)>;
@@ -225,7 +198,7 @@ impl HeapAllocated for Record {
     fn name(&self) -> &String {
         &self.name
     }
-    
+
     fn field_types(&self) -> &Vec<(String, ExprType)> {
         &self.field_types
     }
@@ -244,9 +217,6 @@ pub struct ClassSignature {
     pub name: String,
     pub inherits: String,
     pub field_types: Vec<(String, ExprType)>,
-    // pub method_signatures: HashMap<String, FunctionSignature>,
-    // /// Mapping from method name to vtable index, resolved method name (may be from inherited class)
-    // pub vtable_indices: HashMap<String, (usize, String)>
 }
 
 #[derive(Debug, Clone, Hash)]
@@ -280,7 +250,7 @@ impl HeapAllocated for Class {
     fn name(&self) -> &String {
         &self.name
     }
-    
+
     fn field_types(&self) -> &Vec<(String, ExprType)> {
         &self.field_types
     }
@@ -318,16 +288,17 @@ impl Program {
         if class_a == class_b {
             return true;
         } else {
-            let child_classes = inheritance_graph.get(class_b)
+            let child_classes = inheritance_graph
+                .get(class_b)
                 .expect("Class {class_b} not found in inheritance graph");
-            
+
             for child_class in child_classes {
                 if self.class_a_inherits_from_b(class_a, child_class, inheritance_graph) {
                     return true;
                 }
             }
         }
-    
+
         false
     }
 
@@ -351,6 +322,8 @@ pub struct CompileCtx {
     pub rbp_offset: i32,
     pub rbx_offset: i32,
     pub tag_id: i32,
+    pub rbp_offset_stack: Vec<i32>,
+    pub rbx_offset_stack: Vec<i32>,
 }
 
 pub fn is_valid_identifier(s: &str) -> bool {

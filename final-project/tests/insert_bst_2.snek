@@ -28,10 +28,17 @@
         (bst_node val NULL NULL)
         (let
             ((curr_val (lookup root val)))
-            (if 
-                (< val curr_val)
-                (bst_node (lookup root val) (insert_value val (lookup root left)) (lookup root right))
-                (bst_node (lookup root val) (lookup root left) (insert_value val (lookup root right)))
+            (block
+                (if
+                    (< val curr_val)
+                    (set! root left (insert_value val (lookup root left)))
+                    (if
+                        (= val curr_val)
+                        root
+                        (set! root right (insert_value val (lookup root right)))
+                    )
+                )
+                root
             )
         )
     )
@@ -55,6 +62,7 @@
         (print_tree root)
         (set! root (insert_value input root))
         (print_tree root)
+        0
     )
 )
 
