@@ -1,0 +1,8 @@
+(class ClassA Object
+    (instance_vars
+        (x int)
+    )
+    (method_list
+    
+    )
+)

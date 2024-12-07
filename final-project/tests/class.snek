@@ -26,14 +26,6 @@
     )
 )
 
-(fun miles_driven ((v Vehicle)) int
-    (print (lookup v miles_driven))
-)
-
-(fun make_car_with_n_miles ((n int)) Vehicle
-    (Vehicle n)
-)
-
 (let
     ((tesla (Car 1200 4)))
     (block
@@ -41,8 +33,7 @@
         (print (lookup tesla miles_driven) )
         (print (call tesla beep) )
         (print (call tesla honk) )
-        (miles_driven tesla)
-        (make_car_with_n_miles 777)
+        0
     )
 )
 

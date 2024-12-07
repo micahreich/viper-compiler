@@ -6,6 +6,7 @@ use std::io::prelude::*;
 mod compilation;
 mod parsing;
 mod types;
+mod utils;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
