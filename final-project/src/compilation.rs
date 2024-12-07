@@ -1077,10 +1077,10 @@ fn compile_expr(
                 if i == expr_vec.len() - 1 {
                     // Since the block evalualtes to the last expression, we need to carry forward the assignment
                     // if we're at the last expression in the block; otherwise we say it's false
-                    let ret_type = compile_expr(e, ctx, program, Some(true));
+                    let ret_type = compile_expr(e, ctx, program, None);
                     return ret_type;
                 } else {
-                    compile_expr(e, ctx, program, None);
+                    compile_expr(e, ctx, program, Some(false));
                 }
             }
 
@@ -1480,30 +1480,35 @@ fn compile_main_expr_to_instrs(
     // bytes for local variables and expression evaluation, and need `rbx_storage_stack_space_needed`-many
     // bytes for pushing/popping $rbx
     let stack_space_needed_n_bytes = stack_space_needed(expr) + 5 * SIZE_OF_DWORD;
+
     let rbx_storage_stack_space_needed_n_bytes = rbx_ministack_space_needed(expr);
     let total_stack_space_needed_n_bytes =
         stack_space_needed_n_bytes + rbx_storage_stack_space_needed_n_bytes;
 
-    println!("rbx_storage_stack_space_needed_n_bytes: {}", rbx_storage_stack_space_needed_n_bytes);
-    println!("total_stack_space_needed_n_bytes: {}", total_stack_space_needed_n_bytes);
-
     // Reset parts of the context (need to keep the tag_id as it was before)
     ctx.clear_instrs();
-    ctx.clear_scope();
-    ctx.reset_rbp_offset(0);
-
-    // ctx.rbx_offset = -1 * 4 * SIZE_OF_DWORD;
-    // ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
-    // ctx.scope.clear();
+    ctx.rbx_offset = -1 * 4 * SIZE_OF_DWORD;
+    ctx.rbp_offset = ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes;
+    ctx.scope.clear();
 
     ctx.instr_vec.push(Instr::IEnter(utils::round_up_to_next_multiple_of_16(
         total_stack_space_needed_n_bytes,
     )));
 
-    let old_r12_rbp_offset = ctx.push_reg_to_stack(Reg::R12);  // Store R12 so we can restore it later
-    let old_rbx_rbp_offset = ctx.push_reg_to_stack(Reg::RBX);  // Store RBX so we can restore it later
-    ctx.push_reg_to_stack(Reg::RSI);  // Push max heap size to stack (can index with [rbp - 16])
-    ctx.push_val_to_stack(0);    // Push current heap size (0) to stack (can index with [rbp - 24])
+    // Store R12 so we can restore it later
+    let old_r12_rbp_offset = push_reg_to_stack(&mut ctx.instr_vec, 0, Reg::R12);
+
+    // Store current RBP to R12
+    ctx.instr_vec.push(Instr::IMov(Val::Reg(Reg::R12), Val::Reg(Reg::RBP)));
+
+    // Push max heap size to stack (can index with [rbp - 16])
+    let max_heap_size_rbp_offset = push_reg_to_stack(&mut ctx.instr_vec, old_r12_rbp_offset, Reg::RSI);
+
+    // Push current heap size (0) to stack (can index with [rbp - 24])
+    let curr_heap_size_rbp_offset = push_val_to_stack(&mut ctx.instr_vec, max_heap_size_rbp_offset, 0);
+
+    // Store RBX so we can restore it later
+    let old_rbx_rbp_offset = push_reg_to_stack(&mut ctx.instr_vec, curr_heap_size_rbp_offset, Reg::RBX);
 
     // Set initial carry forward to 0
     ctx.instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(0)));
@@ -1513,17 +1518,17 @@ fn compile_main_expr_to_instrs(
     ctx.scope
         .insert("input".to_string(), (input_rbp_offset, ExprType::Number));
 
-    ctx.reset_rbx_offset(ctx.rbp_offset);
-    ctx.reset_rbp_offset(ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes);
+    // ctx.reset_rbx_offset(ctx.rbp_offset);
+    // ctx.reset_rbp_offset(ctx.rbx_offset - rbx_storage_stack_space_needed_n_bytes);
 
     let ret = compile_expr(expr, ctx, program, None);
 
-    if !matches!(ret, ExprType::Number | ExprType::Boolean) {
-        panic!(
-            "Main expression must evaluate to a number or boolean, got {:?}",
-            ret
-        );
-    }
+    // if !matches!(ret, ExprType::Number | ExprType::Boolean) {
+    //     panic!(
+    //         "Main expression must evaluate to a number or boolean, got {:?}",
+    //         ret
+    //     );
+    // }
 
     // Call print function with final result
     ctx.instr_vec.push(Instr::IComment("Print final result".into()));
@@ -1738,6 +1743,8 @@ fn compile_heap_print_function(e: &dyn HeapAllocated, ctx: &mut CompileCtx) {
 }
 
 fn compile_class_vtable(class: &Class, ctx: &mut CompileCtx) {
+    ctx.clear_instrs();
+
     let mut vtable_indices = vec![Instr::IDq("NULL".into()); class.vtable_indices.len()];
 
     for (method_name, (vtable_idx, method_owner_class)) in class.vtable_indices.iter() {
@@ -1885,7 +1892,6 @@ rc_incr:
 
     // Generate assembly for class VTables
     for (class_name, class) in program.classes.iter() {
-        ctx.instr_vec.clear();
         compile_class_vtable(class, &mut ctx);
 
         let asm_func_string = format!(
