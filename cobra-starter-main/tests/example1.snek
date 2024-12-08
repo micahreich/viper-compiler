@@ -1,2 +1,0 @@
-(let ((x 5))
-     (block (set! x (+ x 1))))

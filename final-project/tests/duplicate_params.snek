@@ -1,5 +1,0 @@
-(fun fun1 ((a int) (a int)) int
-    (+ a a)
-)
-
-(fun1 2 10)

@@ -1,6 +1,0 @@
-(record Vec2 ((x int) (y int)))
-
-(let
-    ((vec (Vec2)))
-    (5)
-)
