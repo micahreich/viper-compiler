@@ -1,11 +1,13 @@
-use core::panic;
-use im::{HashMap, HashSet};
 use regex::Regex;
-// use prettydiff::format_table::new;
-use sexp::Atom::*;
-use sexp::*;
-
 use crate::types::*;
+
+/// Place values into 1st ($rdi) and 2nd ($rsi) arguments for a function call
+pub fn place_args_in_rdi_rsi(ctx: &mut CompileCtx, rdi: Val, rsi: Val) {
+    ctx.instr_vec.extend([
+        Instr::IMov(Val::Reg(Reg::RDI), rdi),
+        Instr::IMov(Val::Reg(Reg::RSI), rsi),
+    ]);
+}
 
 /// Determine if a string is a valid identifier; must not be a reserved keyword, must not be a number
 pub fn is_valid_identifier(s: &str) -> bool {
@@ -35,6 +37,5 @@ pub fn format_method_name_label(class_name: &String, method_name: &str) -> Strin
 
 /// Round a positive integer up to the next multiple of 16
 pub fn round_up_to_next_multiple_of_16(n: i32) -> i32 {
-    println!("Rounding up: {} to {}", n, (n + 15) & !15);
     (n + 15) & !15
 }

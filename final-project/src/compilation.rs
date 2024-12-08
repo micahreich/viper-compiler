@@ -1,20 +1,9 @@
 use core::panic;
 use std::cmp::max;
 use std::iter::zip;
-
 use crate::{types::*, utils};
 
 const N_SPACES_ASM_INDENTATION: usize = 2;
-
-// Helper functions for simplifying common x86/stack behaviors
-
-/// Place values into 1st ($rdi) and 2nd ($rsi) arguments for a function call
-fn place_args_in_rdi_rsi(ctx: &mut CompileCtx, rdi: Val, rsi: Val) {
-    ctx.instr_vec.extend([
-        Instr::IMov(Val::Reg(Reg::RDI), rdi),
-        Instr::IMov(Val::Reg(Reg::RSI), rsi),
-    ]);
-}
 
 /// Compute the amount of stack space needed to evaluate an expression
 /// This is used to determine how much space to allocate on the stack for a given expression and
@@ -237,10 +226,10 @@ fn instr_to_str(i: &Instr) -> String {
         }
         Instr::ICall(fn_name) => format!("call {}", fn_name),
         Instr::IJumpOverflow(fn_name) => format!("jo {}", fn_name),
-        Instr::IRet => "ret".to_string(),
+        Instr::IRet => "ret".into(),
         Instr::IComment(s) => format!("; {}", s),
         Instr::IEnter(n) => format!("enter {}, 0", n),
-        Instr::ILeave => "leave".to_string(),
+        Instr::ILeave => "leave".into(),
         Instr::IDq(s) => format!("dq {}", s),
     }
 }
@@ -248,16 +237,15 @@ fn instr_to_str(i: &Instr) -> String {
 /// Stringify a register to x86-64 assembly register name
 fn reg_to_str(r: &Reg) -> String {
     match r {
-        Reg::RAX => "rax".to_string(),
-        Reg::RSP => "rsp".to_string(),
-        Reg::RDI => "rdi".to_string(),
-        Reg::RSI => "rsi".to_string(),
-        Reg::R10 => "r10".to_string(),
-        Reg::R13 => "r13".to_string(),
-        Reg::RBP => "rbp".to_string(),
-        Reg::R11 => "r11".to_string(),
-        Reg::R12 => "r12".to_string(),
-        Reg::RBX => "rbx".to_string(),
+        Reg::RAX => "rax".into(),
+        Reg::RSP => "rsp".into(),
+        Reg::RDI => "rdi".into(),
+        Reg::RSI => "rsi".into(),
+        Reg::R13 => "r13".into(),
+        Reg::RBP => "rbp".into(),
+        Reg::R11 => "r11".into(),
+        Reg::R12 => "r12".into(),
+        Reg::RBX => "rbx".into(),
     }
 }
 
@@ -584,7 +572,7 @@ fn compile_expr(
                             Instr::ICall(format!("{}_print", e_type_name).into()),
                         ]);
                     } else {
-                        place_args_in_rdi_rsi(
+                        utils::place_args_in_rdi_rsi(
                             ctx,
                             Val::Reg(Reg::RAX),
                             Val::Imm(e_type.to_type_flag()),
@@ -950,35 +938,6 @@ fn compile_expr(
 
             ExprType::RecordPointer(record_name.clone())
         }
-        // Expr::SetField(id, field_name, field_expr) => {
-        //     let (id_offset, id_type) = ctx
-        //         .scope
-        //         .get(id)
-        //         .expect("Variable not found in scope during set expression")
-        //         .clone();
-
-        //     ctx.instr_vec.push(Instr::IMov(Val::Reg(Reg::RAX), Val::RegOffset(Reg::RBP, id_offset)));
-
-        //     match &id_type {
-        //         ExprType::RecordPointer(record_name) => compile_heap_allocated_set_field(
-        //             program.get_record(record_name),
-        //             id_offset,
-        //             field_name,
-        //             field_expr,
-        //             ctx,
-        //             program,
-        //         ),
-        //         ExprType::ObjectPointer(class_name) => compile_heap_allocated_set_field(
-        //             program.get_class(class_name),
-        //             id_offset,
-        //             field_name,
-        //             field_expr,
-        //             ctx,
-        //             program,
-        //         ),
-        //         _ => panic!("Invalid: set! with fields on non-heap-allocated type"),
-        //     }
-        // }
         Expr::SetField(id, field_name, field_expr) => {
             let (id_offset, id_type) = ctx
                 .scope
@@ -1051,13 +1010,11 @@ fn compile_expr(
         }
         Expr::CallMethod(obj_id, method_name, args) => {
             // Compile first argument and ensure it points to an object
-            let (obj_id_offset, obj_id_type) = ctx
+            let (_obj_id_offset, obj_id_type) = ctx
                 .scope
                 .get(obj_id)
                 .expect("Class not found in scope during set expression")
                 .clone();
-
-            println!("Calling a method which has rbp offset: {:?}", obj_id_offset);
 
             if let ExprType::ObjectPointer(class_name) = obj_id_type {
                 let class_signature = program.get_class(&class_name);
@@ -1075,11 +1032,7 @@ fn compile_expr(
                         "Method {method_name} definition not found in class {owning_class_name}",
                     );
 
-                // `self` has been inserted into the arguments suring parsing
-
-                println!("Calling method with signature: {:?}", method_signature);
-                println!(" Args are {:?}", args);
-
+                // `self` has been inserted into the arguments during parsing
                 if args.len() != method_signature.arg_types.len() {
                     panic!("Invalid number of arguments for method call {method_name} on object of type {class_name}, expected {} but got {}",
                     method_signature.arg_types.len(), args.len());
@@ -1140,9 +1093,6 @@ fn compile_function_to_instrs(
     let rbx_storage_stack_space_needed_n_bytes = rbx_ministack_space_needed(&func.body);
     let total_stack_space_needed_n_bytes =
         stack_space_needed_n_bytes + rbx_storage_stack_space_needed_n_bytes;
-
-    println!("Function {} needs rbx_storage_stack_space_needed_n_bytes: {rbx_storage_stack_space_needed_n_bytes} bytes of stack space",
-    func.name);
 
     // Reset parts of the context (need to keep the tag_id as it was before)
     ctx.clear_instrs();
@@ -1245,12 +1195,12 @@ fn compile_main_expr_to_instrs(
 
     let ret = compile_expr(expr, ctx, program, None);
 
-    // if !matches!(ret, ExprType::Number | ExprType::Boolean) {
-    //     panic!(
-    //         "Main expression must evaluate to a number or boolean, got {:?}",
-    //         ret
-    //     );
-    // }
+    if !matches!(ret, ExprType::Number | ExprType::Boolean) {
+        println!(
+            "[WARNING] Main expression does not evaluate to a number or boolean, got {:?}",
+            ret
+        );
+    }
 
     // Call print function with final result
     ctx.instr_vec
@@ -1418,7 +1368,7 @@ fn compile_heap_print_function(e: &dyn HeapAllocated, ctx: &mut CompileCtx) {
     ctx.instr_vec.extend(PRINT_OPEN_PARENS);
 
     for (i, (_, field_type)) in fields.iter().enumerate() {
-        place_args_in_rdi_rsi(
+        utils::place_args_in_rdi_rsi(
             ctx,
             Val::RegOffset(Reg::R13, ((i as i32) + e.field_idx_start()) * SIZE_OF_DWORD),
             Val::Imm(field_type.to_type_flag()),
@@ -1580,8 +1530,6 @@ rc_incr:
 
     for func in funcs {
         let name = func.name.clone();
-        println!("Starting compilation for {name}");
-
         let eval_return_type = compile_function_to_instrs(func, &mut ctx, program);
 
         if !program.expr_a_subtypes_b(&eval_return_type, &func.return_type) {
@@ -1600,7 +1548,6 @@ rc_incr:
         );
 
         asm_section_text.push_str(&asm_func_string);
-        println!("Finished compilation for {name}");
     }
 
     // Generate assembly for class VTables
