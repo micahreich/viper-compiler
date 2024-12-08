@@ -1,0 +1,9 @@
+(record bst_node ((val int) (left bst_node) (right bst_node)))
+
+(fun alloc () bst_node
+    (bst_node 5 NULL NULL)
+)
+
+(let ((new_root alloc))
+    true
+)

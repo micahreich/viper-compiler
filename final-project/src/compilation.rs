@@ -132,27 +132,31 @@ fn rbx_ministack_space_needed(e: &Expr) -> i32 {
     match e {
         Expr::Number(_)
         | Expr::Boolean(_)
-        | Expr::Id(_)
-        | Expr::UnOp(_, _)
-        | Expr::BinOp(_, _, _) => 0,
+        | Expr::Id(_) => 0,
+        Expr::UnOp(_, e) => {
+            rbx_ministack_space_needed(e)
+        }
+        | Expr::BinOp(_, e1, e2) => {
+            max(rbx_ministack_space_needed(e1), rbx_ministack_space_needed(e2))
+        },
         Expr::Let(bindings, expr) => {
             // We push the evaluation of each binding to the stack
-            let space_needed_for_e = bindings.iter().fold(0, |acc, (_, binding_expr)| {
-                max(acc, rbx_ministack_space_needed(binding_expr))
+            let space_needed_for_bindings_eval = bindings.iter().fold(0, |acc, (_, binding_expr)| {
+                max(acc, SIZE_OF_DWORD + rbx_ministack_space_needed(binding_expr))
             });
 
             max(
                 rbx_ministack_space_needed(expr),
-                space_needed_for_e + SIZE_OF_DWORD,
+                space_needed_for_bindings_eval,
             )
         }
         Expr::Set(_, expr) => SIZE_OF_DWORD + rbx_ministack_space_needed(expr),
         Expr::Block(expr_vec) => {
             let space_needed_for_block = expr_vec
                 .iter()
-                .fold(0, |acc, e| max(acc, rbx_ministack_space_needed(e)));
+                .fold(0, |acc, e| max(acc, SIZE_OF_DWORD + rbx_ministack_space_needed(e)));
 
-            space_needed_for_block + SIZE_OF_DWORD
+            space_needed_for_block
         }
         Expr::If(expr_cond, expr_true, expr_false) => {
             let space_needed_for_branches = max(
@@ -911,7 +915,7 @@ fn compile_expr(
         }
         Expr::Lookup(e1, field) => {
             ctx.instr_vec
-                .push(Instr::IComment("Lookup expression".into()));
+                .push(Instr::IComment("Lookup {field}, compiling e1".into()));
             // Track the old carry forward assignment value, temporarily set to 0 for field lookup
             let e1_type = compile_expr(e1, ctx, program, Some(false));
 
@@ -1047,11 +1051,13 @@ fn compile_expr(
         }
         Expr::CallMethod(obj_id, method_name, args) => {
             // Compile first argument and ensure it points to an object
-            let (_, obj_id_type) = ctx
+            let (obj_id_offset, obj_id_type) = ctx
                 .scope
                 .get(obj_id)
                 .expect("Class not found in scope during set expression")
                 .clone();
+
+            println!("Calling a method which has rbp offset: {:?}", obj_id_offset);
 
             if let ExprType::ObjectPointer(class_name) = obj_id_type {
                 let class_signature = program.get_class(&class_name);
@@ -1070,6 +1076,10 @@ fn compile_expr(
                     );
 
                 // `self` has been inserted into the arguments suring parsing
+
+                println!("Calling method with signature: {:?}", method_signature);
+                println!(" Args are {:?}", args);
+
                 if args.len() != method_signature.arg_types.len() {
                     panic!("Invalid number of arguments for method call {method_name} on object of type {class_name}, expected {} but got {}",
                     method_signature.arg_types.len(), args.len());
@@ -1130,6 +1140,9 @@ fn compile_function_to_instrs(
     let rbx_storage_stack_space_needed_n_bytes = rbx_ministack_space_needed(&func.body);
     let total_stack_space_needed_n_bytes =
         stack_space_needed_n_bytes + rbx_storage_stack_space_needed_n_bytes;
+
+    println!("Function {} needs rbx_storage_stack_space_needed_n_bytes: {rbx_storage_stack_space_needed_n_bytes} bytes of stack space",
+    func.name);
 
     // Reset parts of the context (need to keep the tag_id as it was before)
     ctx.clear_instrs();

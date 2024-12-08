@@ -622,76 +622,141 @@ impl<'a> CompileCtx<'a> {
         self.rbp_offset = offset;
     }
 
-    fn push_reg_to_genstack(&mut self, reg: Reg, offset: &mut i32) -> i32 {
-        *offset += -SIZE_OF_DWORD;
+    // fn push_reg_to_genstack(&mut self, reg: Reg, offset: &mut i32) -> i32 {
+    //     *offset += -SIZE_OF_DWORD;
     
-        self.instr_vec.push(Instr::IMov(
-            Val::RegOffset(Reg::RBP, *offset),
-            Val::Reg(reg),
-        ));
+    //     self.instr_vec.push(Instr::IMov(
+    //         Val::RegOffset(Reg::RBP, *offset),
+    //         Val::Reg(reg),
+    //     ));
     
-        *offset
-    }
+    //     *offset
+    // }
     
-    fn pop_reg_from_genstack(&mut self, reg: Reg, offset: &mut i32) -> i32 {
-        self.instr_vec.push(Instr::IMov(
-            Val::Reg(reg),
-            Val::RegOffset(Reg::RBP, *offset),
-        ));
+    // fn pop_reg_from_genstack(&mut self, reg: Reg, offset: &mut i32) -> i32 {
+    //     self.instr_vec.push(Instr::IMov(
+    //         Val::Reg(reg),
+    //         Val::RegOffset(Reg::RBP, *offset),
+    //     ));
     
-        *offset += SIZE_OF_DWORD;
-        *offset
-    }
+    //     *offset += SIZE_OF_DWORD;
+    //     *offset
+    // }
     
+    // /// Push the value of a register to the stack at the given offset from RBP and return the new offset
+    // pub fn push_reg_to_stack(&mut self, reg: Reg) -> i32 {
+    //     let mut offset = self.rbp_offset;
+    //     let res = self.push_reg_to_genstack(reg, &mut offset);
+    //     self.rbp_offset = res;
+
+    //     res
+    // }
+    
+    // /// Push an immediate value to the stack at the given offset from RBP and return the new offset
+    // pub fn push_val_to_stack(&mut self, val: i32) -> i32 {
+    //     self.rbp_offset += -SIZE_OF_DWORD;
+    
+    //     self.instr_vec.push(Instr::IMov(
+    //         Val::RegOffset(Reg::RBP, self.rbp_offset),
+    //         Val::Imm(val),
+    //     ));
+    
+    //     self.rbp_offset
+    // }
+    
+    // /// Push RBX to the RBX mini-stack at the given offset from RBP and return the new offset
+    // pub fn push_rbx_to_ministack(&mut self) -> i32 {
+    //     let mut offset = self.rbx_offset;
+    //     let res = self.push_reg_to_genstack(Reg::RBX, &mut offset);
+    //     self.rbx_offset = res;
+
+    //     res
+    // }
+    
+    // /// Pop RBX from the RBX mini-stack at the given offset from RBP and return the new offset
+    // pub fn pop_rbx_from_ministack(&mut self) -> i32 {
+    //     let mut offset = self.rbx_offset;
+    //     let res = self.pop_reg_from_genstack(Reg::RBX, &mut offset);
+    //     self.rbx_offset = res;
+
+    //     res
+    // }
+    
+    // /// Set the carry forward assignment value in RBX to the given value
+    // pub fn set_carry_forward(&mut self, val: bool) {
+    //     self.instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(i32::from(val))));
+    // }
+    
+    // /// Push RBX to the stack and set the carry forward assignment value in RBX to the given value
+    // pub fn push_rbx_and_set_carry_forward(&mut self, val: bool) -> i32 {
+    //     self.rbx_offset = self.push_rbx_to_ministack();
+    //     self.set_carry_forward(val);
+
+    //     self.rbx_offset
+    // }    
+
     /// Push the value of a register to the stack at the given offset from RBP and return the new offset
     pub fn push_reg_to_stack(&mut self, reg: Reg) -> i32 {
-        let mut offset = self.rbp_offset;
-        let res = self.push_reg_to_genstack(reg, &mut offset);
-        self.rbp_offset = res;
+        let new_rbp_offset = self.rbp_offset - SIZE_OF_DWORD;
 
-        res
+        self.instr_vec.push(Instr::IMov(
+            Val::RegOffset(Reg::RBP, new_rbp_offset),
+            Val::Reg(reg),
+        ));
+
+        self.rbp_offset = new_rbp_offset;
+        new_rbp_offset
     }
-    
+
     /// Push an immediate value to the stack at the given offset from RBP and return the new offset
     pub fn push_val_to_stack(&mut self, val: i32) -> i32 {
-        self.rbp_offset += -SIZE_OF_DWORD;
-    
+        let new_rbp_offset = self.rbp_offset - SIZE_OF_DWORD;
+
         self.instr_vec.push(Instr::IMov(
-            Val::RegOffset(Reg::RBP, self.rbp_offset),
+            Val::RegOffset(Reg::RBP, new_rbp_offset),
             Val::Imm(val),
         ));
-    
-        self.rbp_offset
-    }
-    
-    /// Push RBX to the RBX mini-stack at the given offset from RBP and return the new offset
-    pub fn push_rbx_to_ministack(&mut self) -> i32 {
-        let mut offset = self.rbx_offset;
-        let res = self.push_reg_to_genstack(Reg::RBX, &mut offset);
-        self.rbx_offset = res;
 
-        res
+        self.rbp_offset = new_rbp_offset;
+        new_rbp_offset
     }
-    
+
+    /// Push RBX to the RBX mini-stack at the given offset from RBP and return the new offset
+    pub fn push_rbx_to_stack(&mut self) -> i32 {
+        let new_rbx_offset = self.rbx_offset - SIZE_OF_DWORD;
+
+        self.instr_vec.push(Instr::IMov(
+            Val::RegOffset(Reg::RBP, new_rbx_offset),
+            Val::Reg(Reg::RBX),
+        ));
+
+        self.rbx_offset = new_rbx_offset;
+        new_rbx_offset
+    }
+
     /// Pop RBX from the RBX mini-stack at the given offset from RBP and return the new offset
     pub fn pop_rbx_from_ministack(&mut self) -> i32 {
-        let mut offset = self.rbx_offset;
-        let res = self.pop_reg_from_genstack(Reg::RBX, &mut offset);
-        self.rbx_offset = res;
+        let new_rbx_offset = self.rbx_offset + SIZE_OF_DWORD;
 
-        res
+        self.instr_vec.push(Instr::IMov(
+            Val::Reg(Reg::RBX),
+            Val::RegOffset(Reg::RBP, self.rbx_offset),
+        ));
+
+        self.rbx_offset = new_rbx_offset;
+        new_rbx_offset
     }
-    
+
     /// Set the carry forward assignment value in RBX to the given value
     pub fn set_carry_forward(&mut self, val: bool) {
         self.instr_vec.push(Instr::IMov(Val::Reg(Reg::RBX), Val::Imm(i32::from(val))));
     }
-    
+
     /// Push RBX to the stack and set the carry forward assignment value in RBX to the given value
     pub fn push_rbx_and_set_carry_forward(&mut self, val: bool) -> i32 {
-        self.rbx_offset = self.push_rbx_to_ministack();
+        let new_rbx_offset = self.push_rbx_to_stack();
         self.set_carry_forward(val);
 
-        self.rbx_offset
-    }    
+        new_rbx_offset
+    }
 }
