@@ -46,11 +46,11 @@
     (block
         (print (call base increment_counter))
         (print (call base increment_counter))
-        (print (call base reset_counter))
-        (print (call derived increment_counter))
-        (print (call derived increment_counter))
-        (print (call derived set_factor 5))
-        (print (call derived increment_counter))
+        (print (call base reset_counter)) 
+        (print (call derived increment_counter)) 
+        (print (call derived increment_counter)) 
+        (print (call derived set_factor 5))    
+        (print (call derived increment_counter)) 
         0
     )
 )

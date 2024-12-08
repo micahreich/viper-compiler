@@ -1,49 +1,49 @@
 use core::panic;
-use im::{HashMap, HashSet};
-// use prettydiff::format_table::new;
 use sexp::Atom::*;
 use sexp::*;
+use std::collections::HashMap;
 
 use crate::types::*;
+use crate::utils;
 
-pub fn format_method_name(class_name: &str, method_name: &str) -> String {
-    format!("__{}_{}", class_name, method_name)
-}
-
-pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, defns: &ProgDefns) -> Expr {
+pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, symbol_table: &SymbolTable) -> Expr {
     match b_vec_sexp {
         Sexp::List(vec) => {
-            let bindings_vector: Vec<(String, Expr)> = vec.iter().map(|sexp_list| {
+            let bindings_vector = vec.iter().map(|sexp_list| {
                 match sexp_list {
                     Sexp::List(vec) => match &vec[..] {
                         [Sexp::Atom(S(identifier)), e] => {
-                            if !is_valid_identifier(identifier) {
+                            if !utils::is_valid_identifier(identifier) {
                                 panic!("Reserved keyword or invalid identifier used as variable name in let expression: {identifier}");
                             }
 
-                            (identifier.clone(), parse_expr(e, defns))
+                            (identifier.clone(), parse_expr(e, symbol_table))
                         }
                         _ => {
-                            println!("{:?}", vec);
                             panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)")
                         },
                     },
                     _ => {
-                        println!("{:?}", sexp_list);
                         panic!("Invalid let expression: bindings must be of the form (<identifier> <expr>)")
                     },
                 }
             })
-            .collect();
+            .collect::<Vec<(String, Expr)>>();
 
-            Expr::Let(bindings_vector, Box::new(parse_expr(expr_sexp, defns)))
+            Expr::Let(
+                bindings_vector,
+                Box::new(parse_expr(expr_sexp, symbol_table)),
+            )
         }
         _ => panic!("Invalid program: malformed let expression (are you missing parens?)"),
     }
 }
 
-pub fn parse_block_expr(e_vec_sexp: &[Sexp], defns: &ProgDefns) -> Expr {
-    let expression_vec: Vec<Expr> = e_vec_sexp.iter().map(|e| parse_expr(e, defns)).collect();
+pub fn parse_block_expr(e_vec_sexp: &[Sexp], symbol_table: &SymbolTable) -> Expr {
+    let expression_vec = e_vec_sexp
+        .iter()
+        .map(|e| parse_expr(e, symbol_table))
+        .collect::<Vec<Expr>>();
 
     if expression_vec.len() == 0 {
         panic!("Invalid program: blocks must have at least one expression");
@@ -52,88 +52,90 @@ pub fn parse_block_expr(e_vec_sexp: &[Sexp], defns: &ProgDefns) -> Expr {
     Expr::Block(expression_vec)
 }
 
-pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
+pub fn parse_expr(s: &Sexp, symbol_table: &SymbolTable) -> Expr {
     match s {
         Sexp::Atom(Atom::F(_)) => panic!("Invalid program: floats are not supported"),
-        Sexp::Atom(Atom::S(str)) => {
-            if str == "true" {
+        Sexp::Atom(Atom::S(id)) => {
+            if id == "true" {
                 Expr::Boolean(true)
-            } else if str == "false" {
+            } else if id == "false" {
                 Expr::Boolean(false)
             } else {
-                Expr::Id(str.to_string())
+                Expr::Id(id.to_string())
             }
         }
         Sexp::Atom(Atom::I(x)) => match i32::try_from(*x) {
             Ok(val) => Expr::Number(val),
-            Err(_) => panic!("Invalid number; cannot convert to i32"),
+            Err(_) => panic!("Cannot convert int literal to i32"),
         },
         Sexp::List(vec) => match &vec[..] {
             [Sexp::Atom(S(op)), e] if op == "add1" => {
-                Expr::UnOp(Op1::Add1, Box::new(parse_expr(e, defns)))
+                Expr::UnOp(Op1::Add1, Box::new(parse_expr(e, symbol_table)))
             }
             [Sexp::Atom(S(op)), e] if op == "sub1" => {
-                Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e, defns)))
+                Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e, symbol_table)))
             }
             [Sexp::Atom(S(op)), e] if op == "print" => {
+                // Parse a print expression as let x = eval e in print e end
                 Expr::Let(
-                    vec![("__tmp".into(), parse_expr(e, defns))],
-                    Box::new(
-                        Expr::UnOp(Op1::Print, Box::new(Expr::Id("__tmp".into())))
-                    )
+                    vec![("__tmp".into(), parse_expr(e, symbol_table))],
+                    Box::new(Expr::UnOp(Op1::Print, Box::new(Expr::Id("__tmp".into())))),
                 )
             }
             [Sexp::Atom(S(op)), e1, Sexp::Atom(S(field))] if op == "lookup" => {
-                // We parse a lookup expression as let x = eval record, then lookup the field in x
+                // We parse a lookup expression as let x = eval e in lookup x field end
                 // This is done to avoid GC errors when the record is created inside the lookup expr
                 Expr::Let(
-                    vec![("__tmp".into(), parse_expr(e1, defns))],
-                    Box::new(Expr::Lookup(Box::new(Expr::Id("__tmp".into())), field.clone()))
+                    vec![("__tmp".into(), parse_expr(e1, symbol_table))],
+                    Box::new(Expr::Lookup(
+                        Box::new(Expr::Id("__tmp".into())),
+                        field.clone(),
+                    )),
                 )
             }
             [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(
                 Op2::Plus,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "-" => Expr::BinOp(
                 Op2::Minus,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "*" => Expr::BinOp(
                 Op2::Times,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "<" => Expr::BinOp(
                 Op2::Less,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "<=" => Expr::BinOp(
                 Op2::LessEqual,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == ">" => Expr::BinOp(
                 Op2::Greater,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == ">=" => Expr::BinOp(
                 Op2::GreaterEqual,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
             [Sexp::Atom(S(op)), e1, e2] if op == "=" => Expr::BinOp(
                 Op2::Equal,
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
             ),
-            [Sexp::Atom(S(op)), b_vec, e] if op == "let" => parse_let_expr(b_vec, e, defns),
+            [Sexp::Atom(S(op)), b_vec, e] if op == "let" => parse_let_expr(b_vec, e, symbol_table),
             [Sexp::Atom(S(op)), Sexp::Atom(S(name)), e1] if op == "set!" => {
-                Expr::Set(name.clone(), Box::new(parse_expr(e1, defns)))
+                Expr::Set(name.clone(), Box::new(parse_expr(e1, symbol_table)))
             }
             [Sexp::Atom(S(op)), Sexp::Atom(S(record_name)), Sexp::Atom(S(field_name)), e1]
                 if op == "set!" =>
@@ -141,75 +143,76 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
                 Expr::SetField(
                     record_name.clone(),
                     field_name.clone(),
-                    Box::new(parse_expr(e1, defns)),
+                    Box::new(parse_expr(e1, symbol_table)),
                 )
             }
             [Sexp::Atom(S(op)), e1, e2, e3] if op == "if" => Expr::If(
-                Box::new(parse_expr(e1, defns)),
-                Box::new(parse_expr(e2, defns)),
-                Box::new(parse_expr(e3, defns)),
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
+                Box::new(parse_expr(e3, symbol_table)),
             ),
-            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => {
-                Expr::RepeatUntil(Box::new(parse_expr(e1, defns)), Box::new(parse_expr(e2, defns)))
-            },
+            [Sexp::Atom(S(op)), e1, e2] if op == "repeat-until" => Expr::RepeatUntil(
+                Box::new(parse_expr(e1, symbol_table)),
+                Box::new(parse_expr(e2, symbol_table)),
+            ),
             _ => match &vec[0] {
-                Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], defns),
+                Sexp::Atom(S(op)) if op == "block" => parse_block_expr(&vec[1..], symbol_table),
                 Sexp::Atom(S(val)) if val == "true" => Expr::Boolean(true),
                 Sexp::Atom(S(val)) if val == "false" => Expr::Boolean(false),
                 Sexp::Atom(S(val)) if val == "call" => {
+                    // Parse method calls as let __tmp = eval e1 in __tmp.method_name(e2, e3, ...) end
+                    // With additional `self` / object pointer as first argument
+
                     if let Sexp::Atom(S(method_name)) = &vec[2] {
-                        let args: Vec<Expr> = vec![Expr::Id("__tmp".into())].into_iter()
-                            .chain(
-                                vec.iter().skip(3).map(|e| {
-                                    parse_expr(e, defns)
-                                })
+                        let e1_parsed = parse_expr(&vec[1], symbol_table);
+
+                        if let Expr::Id(name) = e1_parsed {
+                            let args: Vec<Expr> = vec![Expr::Id(name.clone().into())]
+                                .into_iter()
+                                .chain(vec.iter().skip(3).map(|e| parse_expr(e, symbol_table)))
+                                .collect();
+                            
+                            return Expr::CallMethod(
+                                name.into(),
+                                method_name.clone(),
+                                args,
                             )
-                        .collect();
+                        } else {
+                            let args: Vec<Expr> = vec![Expr::Id("__tmp".into())]
+                                .into_iter()
+                                .chain(vec.iter().skip(3).map(|e| parse_expr(e, symbol_table)))
+                                .collect();
 
-                        Expr::Let(
-                            vec![("__tmp".into(), parse_expr(&vec[1], defns))],
-                            Box::new(
-                                Expr::CallMethod(
-                                    "__tmp".into(),
-                                    method_name.clone(),
-                                    args,
-                                )
-                            ),
-                        )
-
-                        // let mut args: Vec<Expr> = Vec::new();
-                        // call obj_name method_name arg1 arg2 arg3...
-
-                        // Since the first argument to call is an object
-                        // that can't be resolved during parsing, we postpone
-                        // checking validity of the method call to the compiling step
-                        // vec.iter().skip(3).enumerate().for_each(|(i, e)| {
-                        //     args.push(parse_expr(e, defns));
-                        // });
-    
-                        // Expr::CallMethod(Box::new(parse_expr(&vec[1], defns)), method_name, args)
+                            Expr::Let(
+                                vec![("__tmp".into(), e1_parsed)],
+                                Box::new(
+                                    Expr::CallMethod(
+                                        "__tmp".into(),
+                                        method_name.clone(),
+                                        args
+                                    )
+                                ),
+                            )
+                        }
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
-                },
+                }
                 Sexp::Atom(S(name)) => {
-                    let mut args: Vec<Expr> = Vec::new();
+                    let mut args = Vec::new();
 
                     vec.iter().skip(1).for_each(|e| {
-                        args.push(parse_expr(e, defns));
+                        args.push(parse_expr(e, symbol_table));
                     });
 
-                    if defns.function_names.contains(name) {
-                        Expr::Call(name.clone(), args)
-                    } else if defns.record_names.contains(name) {
-                        Expr::RecordInitializer(name.clone(), args)
-                    } else if defns.class_names.contains(name) {
-                        Expr::ObjectInitializer(name.clone(), args)
-                    } else {
-                        panic!(
-                            "Invalid program: function call, record initialization, or class initialization for undefined name: {}",
+                    match symbol_table.get(name) {
+                        Some(SymbolType::Function(_)) => Expr::Call(name.clone(), args),
+                        Some(SymbolType::Record(_)) => Expr::RecordInitializer(name.clone(), args),
+                        Some(SymbolType::Class(_)) => Expr::ObjectInitializer(name.clone(), args),
+                        None => panic!(
+                            "Invalid program: function call, record initialization, or class initialization for undefined symbol: {}",
                             name
-                        );
+                        ),
                     }
                 }
                 _ => panic!("Invalid program: malformed expression"),
@@ -218,614 +221,216 @@ pub fn parse_expr(s: &Sexp, defns: &ProgDefns) -> Expr {
     }
 }
 
-pub fn parse_type(s: &Sexp, defns: &ProgDefns) -> ExprType {
-    match s {
-        Sexp::Atom(S(type_name)) => match type_name.as_str() {
-            "int" => ExprType::Number,
-            "bool" => ExprType::Boolean,
-            _ => {
-                if defns.record_names.contains(type_name) {
-                    ExprType::RecordPointer(type_name.into())
-                } else if defns.class_names.contains(type_name) {
-                    ExprType::ObjectPointer(type_name.into())
-                } else {
-                    panic!("Invalid program: type name not found in record or class definitions")
-                }
-            }
-        }
-        _ => {
-            panic!("Type name must be a string literal");
-        }
-    }
-}
+pub fn parse_argument(s: &Sexp, symbol_table: &SymbolTable) -> (String, ExprType) {
+    let err_msg = "Malformed argument, expecting argument of form (name type)";
 
-pub fn parse_argument(s: &Sexp, defns: &ProgDefns) -> (String, ExprType) {
     match s {
-        Sexp::Atom(_) => panic!("Malformed function argument"),
+        Sexp::Atom(_) => panic!("{}", err_msg),
         Sexp::List(vec) => {
             if vec.len() != 2 {
-                panic!("Malformed function argument");
+                panic!("{}", err_msg)
             }
 
-            let arg_name = match &vec[0] {
-                Sexp::Atom(S(name)) => name,
-                _ => panic!("Malformed function argument"),
-            };
+            match (&vec[0], &vec[1]) {
+                (Sexp::Atom(S(name)), Sexp::Atom(S(type_name))) => {
+                    if !utils::is_valid_identifier(name) {
+                        panic!("Reserved keyword or invalid identifier used as variable name in function argument: {name}");
+                    }
 
-            let arg_type = parse_type(&vec[1], defns);
-
-            (arg_name.to_string(), arg_type)
+                    (
+                        name.clone(),
+                        ExprType::from_stringified_type(type_name, symbol_table),
+                    )
+                }
+                _ => panic!("{}", err_msg),
+            }
         }
     }
 }
 
-pub fn parse_record_defn(s: &Sexp, defns: &ProgDefns) -> Record {
+pub fn parse_record_defn(s: &Sexp, symbol_table: &SymbolTable) -> Record {
+    let err_msg = "Malformed record definition, expecting definition of form (record record_name (field1 type1) (field2 type2) ...)";
+
     match s {
         Sexp::Atom(_) => panic!("Malformed definition"),
         Sexp::List(vec) => {
-            match &vec[0] {
-                Sexp::Atom(S(name)) => {
-                    if name != "record" {
+            if vec.len() != 3 {
+                panic!("{}", err_msg);
+            }
+
+            match (&vec[0], &vec[1], &vec[2]) {
+                (Sexp::Atom(S(keyword)), Sexp::Atom(S(record_name)), Sexp::List(arg_vec)) => {
+                    if keyword != "record" {
                         panic!("Malformed record definition, expecting record definition with keyword `record`");
                     }
+
+                    let record_fields = arg_vec
+                        .iter()
+                        .map(|s1| parse_argument(s1, symbol_table))
+                        .collect::<Vec<(String, ExprType)>>();
+
+                    Record {
+                        name: record_name.clone(),
+                        field_types: record_fields,
+                    }
                 }
-                _ => panic!("Malformed definition"),
-            }
-
-            let record_name = if let Sexp::Atom(S(name)) = &vec[1] {
-                name
-            } else {
-                panic!("Malformed definition")
-            };
-
-            let mut record_fields: Vec<(String, ExprType)> = Vec::new();
-
-            if let Sexp::List(arg_vec) = &vec[2] {
-                for s1 in arg_vec {
-                    record_fields.push(parse_argument(s1, defns));
-                }
-            } else {
-                panic!("Malformed definition: expecting argument list after function name");
-            }
-
-            Record {
-                name: record_name.to_string(),
-                field_types: record_fields,
+                _ => panic!("{}", err_msg),
             }
         }
     }
 }
 
-pub fn parse_class_signature(s: &Sexp, defns: &ProgDefns) -> ClassSignature {
+pub fn parse_class_defn(s: &Sexp, symbol_table: &SymbolTable) -> Class {
+    let err_msg = "Malformed class definition, expecting definition of form \
+    (class class_name inherits_name
+        (instance_vars (arg1 type1) (arg2 type2) ...)
+        (method_list
+            (fun method_name (arg1 type1) (arg2 type2) ... return_type
+                body_expr
+            )
+            ...
+        )
+    )";
+
     match s {
-        Sexp::Atom(_) => panic!("Malformed class definition"),
+        Sexp::Atom(_) => panic!("{}", err_msg),
         Sexp::List(vec) => {
-            match &vec[0] {
-                Sexp::Atom(S(name)) => {
-                    if name != "class" {
+            match (&vec[0], &vec[1], &vec[2], &vec[3], &vec[4]) {
+                (
+                    Sexp::Atom(S(keyword)),
+                    Sexp::Atom(S(class_name)),
+                    Sexp::Atom(S(inherits_name)),
+                    Sexp::List(instance_var_vec),
+                    Sexp::List(methods_vec),
+                ) => {
+                    if keyword != "class" {
                         panic!("Malformed class definition, expecting class definition with keyword `class`");
                     }
-                }
-                _ => panic!("Malformed definition"),
-            }
 
-            let class_name = if let Sexp::Atom(S(name)) = &vec[1] {
-                name
-            } else {
-                panic!("Malformed class definition: expecting class name after keyword `class`");
-            };
+                    let instance_vars = match instance_var_vec.as_slice() {
+                        [Sexp::Atom(S(keyword)), instance_var_vec @ ..] => {
+                            if keyword != "instance_vars" {
+                                panic!("Malformed definition: expecting instance variable list after class name with label `instance_vars`");
+                            }
 
-            let inherits_name = if let Sexp::Atom(S(name)) = &vec[2] {
-                name
-            } else {
-                panic!("Malformed class definition: expecting inherited class name after class name");
-            };
-
-            // TODO @dkrajews: have this support the case of having no instance variables and only methods
-            let mut field_types: Vec<(String, ExprType)> = Vec::new();
-
-            if let Sexp::List(arg_vec) = &vec[3] {
-                println!("arg vec in parse class sig: {:?}", arg_vec);
-                if arg_vec[0] != Sexp::Atom(S("instance_vars".into())) {
-                    panic!("Malformed definition: expecting instance variable list after class name with label `instance_vars`");
-                }
-
-                for s1 in arg_vec.iter().skip(1) {
-                    field_types.push(parse_argument(s1, defns));
-                }
-
-                ClassSignature {
-                    name: class_name.clone(),
-                    inherits: inherits_name.clone(),
-                    field_types: field_types,
-                }
-            } else {
-                panic!("Malformed definition: expecting instance variable list after class name");
-            }
-
-            // let mut method_signatures: HashMap<String, FunctionSignature> = HashMap::new();
-
-            // if let Sexp::List(arg_vec) = &vec[4] {
-            //     for s1 in arg_vec {
-            //         let mut parsed_method_signature = parse_func_signature(s1);
-            //         let method_name = parsed_method_signature.name.clone();
-
-            //         // Add the implicit `self` first argument to the signature
-            //         parsed_method_signature.arg_types.insert(0,("self".to_string(), ExprType::ObjectPointer(class_name.clone())));
-
-            //         // Add the class name prefix to the name part of the signature
-            //         parsed_method_signature.name = format!("__{}_{}", class_name, method_name);
-
-            //         if method_signatures.insert(
-            //             method_name.clone(),
-            //             parsed_method_signature,
-            //         ).is_some() {
-            //             panic!("Duplicate method definition: {method_name} in class {class_name}");
-            //         }
-            //     }
-            // } else {
-            //     panic!("Malformed definition: expecting argument list after method name");
-            // }
-        }
-    }
-}
-
-pub fn parse_class_defn(s: &Sexp, defns: &ProgDefns) -> Class {
-    let signature = parse_class_signature(s, defns);
-    let methods = parse_class_methods(s, defns);
-
-    Class {
-        name: signature.name,
-        inherits: signature.inherits,
-        field_types: signature.field_types,
-        vtable_indices: HashMap::new(),
-        methods: methods,
-    }
-}
-
-pub fn parse_func_signature(s: &Sexp, defns: &ProgDefns) -> FunctionSignature {
-    match s {
-        Sexp::Atom(_) => panic!("Malformed definition"),
-        Sexp::List(vec) => {
-            match &vec[0] {
-                Sexp::Atom(S(name)) => {
-                    if name != "fun" {
-                        panic!("Malformed function definition, expecting function definition with keyword `fun`");
-                    }
-                }
-                _ => panic!("Malformed definition"),
-            }
-
-            let func_name = if let Sexp::Atom(S(name)) = &vec[1] {
-                name
-            } else {
-                panic!("Malformed definition")
-            };
-
-            let func_type = parse_type(&vec[vec.len() - 2], defns);
-
-            let mut func_args: Vec<(String, ExprType)> = Vec::new();
-
-            if let Sexp::List(arg_vec) = &vec[2] {
-                for s1 in arg_vec {
-                    func_args.push(parse_argument(s1, defns));
-                }
-            } else {
-                panic!("Malformed definition: expecting argument list after function name");
-            }
-
-            FunctionSignature {
-                name: func_name.to_string(),
-                arg_types: func_args,
-                return_type: func_type,
-            }
-        }
-    }
-}
-
-pub fn parse_func_defn(
-    s: &Sexp,
-    defns: &ProgDefns,
-) -> Function {
-    let signature = parse_func_signature(s, defns);
-
-    match s {
-        Sexp::List(vec) => {
-            let func_body_expr = parse_expr(&vec[vec.len() - 1], defns);
-
-            Function {
-                name: signature.name,
-                arg_types: signature.arg_types,
-                return_type: signature.return_type,
-                body: Box::new(func_body_expr),
-            }
-        }
-        _ => panic!("Malformed program"),
-    }
-}
-
-// pub fn parse_method_defn(s: &Sexp, ctx: &ProgDefns, class_name: &str) -> Function {
-//     // Right now this function only works for pasing functions, will need to update
-//     // if defintions ever contain more than functions
-
-//     match s {
-//         Sexp::List(sub_vec) => {
-//             let func_name = match &sub_vec[1] {
-//                 Sexp::Atom(S(name)) => name,
-//                 _ => panic!("Malformed definition"),
-//             };
-
-//             let func_body_expr = parse_expr(&sub_vec[sub_vec.len() - 1], ctx);
-
-//             Function {
-//                 signature: ctx
-//                     .class_signatures
-//                     .get(class_name)
-//                     .expect("Signature for class {class_name} not found")
-//                     .method_signatures
-//                     .iter()
-//                     .find(|m| m.name == *func_name)
-//                     .expect("Method {func_name} not found for class {class_name}")
-//                     .clone(),
-//                 body: Box::new(func_body_expr),
-//             }
-//         }
-//         _ => panic!("Malformed program"),
-//     }
-// }
-
-pub fn parse_class_methods(s: &Sexp, defns: &ProgDefns) -> HashMap<String, Function> {
-    match s {
-        Sexp::List(sub_vec) => {
-            let class_name = match &sub_vec[1] {
-                Sexp::Atom(S(name)) => name,
-                _ => panic!("Malformed definition"),
-            };
-
-            match &sub_vec[4] {
-                Sexp::List(func_vec) => {
-                    if func_vec[0] != Sexp::Atom(S("method_list".into())) {
-                        panic!("Malformed definition: expecting method list after class name with label `method_list`");
-                    }
-
-                    let mut class_methods: HashMap<String, Function> = HashMap::new();
-
-                    func_vec.iter().skip(1).for_each(|s1| {
-                        let mut func = parse_func_defn(s1, defns);
-                        let method_name_unmangled = func.name.clone();
-
-                        // Add the implicit `self` first argument to the signature
-                        func.arg_types.insert(0,("self".to_string(), ExprType::ObjectPointer(class_name.clone())));
-
-                        // Add the class name prefix to the name part of the signature
-                        func.name = format_method_name(class_name, &func.name);
-
-                        if class_methods.insert(
-                            method_name_unmangled.clone(),
-                            func,
-                        ).is_some() {
-                            panic!("Duplicate method definition: {method_name_unmangled} in class {class_name}");
+                            instance_var_vec
+                                .iter()
+                                .map(|s1| parse_argument(s1, symbol_table))
+                                .collect::<Vec<(String, ExprType)>>()
                         }
-                    });
-                    
+                        _ => panic!("{}", err_msg),
+                    };
 
-                    // for s1 in func_vec {
-                    //     class_methods.insert(
-                    //         class_signature.name.clone(),
-                    //         parse_func_defn(s1)
-                    //     );
-                    // }
+                    let mut methods = HashMap::new();
 
-                    // return Class {
-                    //     signature: ctx
-                    //         .class_signatures
-                    //         .get(class_name)
-                    //         .expect("Class signature not found")
-                    //         .clone(),
-                    //     methods: class_methods,
-                    // };
+                    match methods_vec.as_slice() {
+                        [Sexp::Atom(S(keyword)), methods_vec @ ..] => {
+                            if keyword != "method_list" {
+                                panic!("Malformed definition: expecting method list after instance variables with label `method_list`");
+                            }
 
-                    return class_methods;
+                            methods_vec.iter().for_each(|s1| {
+                                let mut func = parse_func_defn(s1, symbol_table);
+                                let method_name_unmangled = func.name.clone();
+
+                                // Add the implicit `self` first argument to the signature
+                                func.arg_types.insert(0,("self".to_string(), ExprType::ObjectPointer(class_name.clone())));
+
+                                // Add the class name prefix to the name part of the signature
+                                func.name = utils::format_method_name_label(&class_name, &func.name);
+
+                                if methods.insert(
+                                    method_name_unmangled.clone(),
+                                    func,
+                                ).is_some() {
+                                    panic!("Duplicate method definition: {method_name_unmangled} in class {class_name}");
+                                }
+                            });
+                        }
+                        _ => panic!("{}", err_msg),
+                    }
+
+                    Class::new(
+                        class_name.clone(),
+                        inherits_name.clone(),
+                        instance_vars,
+                        methods,
+                    )
                 }
-                _ => panic!("Malformed class definition"),
+                _ => panic!("{}", err_msg),
             }
         }
-        _ => panic!("Malformed program"),
     }
 }
 
-pub fn create_inheritance_graph(classes_map: &HashMap<String, Class>) -> HashMap<String, Vec<String>> {
-    let mut inheritance_graph: HashMap<String, Vec<String>> = HashMap::new();
+pub fn parse_func_defn(s: &Sexp, symbol_table: &SymbolTable) -> Function {
+    let err_msg = "Malformed function definition, expecting definition of form\
+    (fun function_name (arg1 type1) (arg2 type2) ... return_type
+        body_expr
+    )";
 
-    for class in classes_map.values() {
-        if !inheritance_graph.contains_key(&class.inherits) {
-            inheritance_graph.insert(class.inherits.clone(), Vec::new());
-        }
+    match s {
+        Sexp::Atom(_) => panic!("{}", err_msg),
+        Sexp::List(vec) => match (&vec[0], &vec[1], &vec[2]) {
+            (Sexp::Atom(S(keyword)), Sexp::Atom(S(func_name)), Sexp::List(arg_vec)) => {
+                if keyword != "fun" {
+                    panic!("Malformed function definition, expecting function definition with keyword `fun`");
+                }
 
-        inheritance_graph
-            .get_mut(&class.inherits)
-            .unwrap()
-            .push(class.name.clone());
-    }
+                let func_args = arg_vec
+                    .iter()
+                    .map(|s1| parse_argument(s1, symbol_table))
+                    .collect::<Vec<(String, ExprType)>>();
 
-    inheritance_graph
-}
+                if let Sexp::Atom(S(return_type)) = &vec[vec.len() - 2] {
+                    let func_return_type =
+                        ExprType::from_stringified_type(return_type, symbol_table);
+                    let func_body_expr = parse_expr(&vec[vec.len() - 1], symbol_table);
 
-pub fn flatten_all_classes(
-    classes_map: &mut HashMap<String, Class>,
-    inheritance_graph: &HashMap<String, Vec<String>>,
-) {
-    let mut vtable_visited: HashSet<String> = HashSet::new();
-    let class_names = classes_map.keys().cloned().collect::<Vec<String>>();
-
-    class_names.iter().for_each(|class_name| {
-        let _ = flatten_single_class(
-            &class_name,
-            &mut vtable_visited,
-            inheritance_graph,
-            classes_map,
-        );
-    });
-
-    // // Clone :( the class names so that no borrowing occurs of class_signatures
-    // let class_names: Vec<String> = classes_map.keys().cloned().collect();
-
-    // for class in class_names.iter() {
-    //     resolve_vtable_indices_by_class(
-    //         &class,
-    //         &mut vtable_visited,
-    //         inheritance_graph,
-    //         classes_map,
-    //     );
-    // }
-
-    // for class in class_names.iter() {
-    //     let signature = class_signatures.get(class).unwrap();
-    //     println!("Vtable indices for class {}: {:?}", class, signature.vtable_indices);
-    // }
-}
-
-fn flatten_single_class (
-    current_class_name: &String,
-    visited: &mut HashSet<String>,
-    inheritance_graph: &HashMap<String, Vec<String>>,
-    classes_map: &mut HashMap<String, Class>,
-) {
-    // This method is a DFS over the inheritance graph to ensure
-    // all parent vtable indices are populated before populating the child's indices
-    // let current_class = classes_map
-    //     .get(current_class_name)
-    //     .expect("Class not found");
-
-    // if we already computed this class' indices, we can just return
-    if visited.contains(current_class_name) {
-        return;
-    }
-
-    visited.insert(current_class_name.clone());
-
-    // let class_signature = class_signatures
-    //     .get(current_class)
-    //     .expect("Class signature not found")
-    //     .clone();
-    
-    // Resolve parent vtable indices first
-    let current_class_inherits_name = classes_map
-        .get(current_class_name)
-        .expect("Class not found")
-        .inherits
-        .clone();
-
-
-    if current_class_inherits_name != BASE_CLASS_NAME {
-        flatten_single_class(&current_class_inherits_name, visited, inheritance_graph, classes_map);
-
-        // // Copy parent vtable indices to current class
-        // for (method_name, index) in &class_signatures
-        //     .get(&class_signature.inherits)
-        //     .unwrap()
-        //     .vtable_indices
-        // {
-        //     new_vtable_indices.insert(method_name.clone(), index.clone());
-        // }
-
-        // We need to adjust scopes for our immutable gets since can only have 1 at a time
-        let parent_class_vtable_indices = {
-            let parent_class = classes_map
-                .get(&current_class_inherits_name)
-                .expect("Class not found");
-            parent_class.vtable_indices.clone()
-        };
-
-        let parent_class_field_types = {
-            let parent_class = classes_map
-                .get(&current_class_inherits_name)
-                .expect("Class not found");
-            parent_class.field_types.clone()
-        };
-
-        
-        let current_class = classes_map
-            .get_mut(current_class_name)
-            .expect("Class not found");
-
-        current_class.vtable_indices = parent_class_vtable_indices;
-        let old_fields: Vec<(String, ExprType)> = current_class.field_types.clone();
-        current_class.field_types = parent_class_field_types;
-        current_class.field_types.extend(old_fields);
-
-    }
-
-
-    let current_class = classes_map
-        .get_mut(current_class_name)
-        .expect("Class not found");
-    
-    /*
-     * VTable indices are stored/defined as follows:
-     * - Each parent function should map to the same vtable index as it did in the parent class
-     *  (note this won't really work for multiple inheritance which we don't support)
-     * - Each new function is mapped sequentially to a new index in the vtable
-     */
-
-    
-
-    // let current_class_defined_methods = &classes_map
-    //     .get(current_class_name)
-    //     .expect("Class not found")
-    //     .methods;
-
-    // let current_class_vtable_indices = &mut classes_map
-    //     .get_mut(current_class_name)
-    //     .expect("Class not found")
-    //     .vtable_indices;
-
-
-    for method_name in current_class.methods.keys() {
-        // let existing_vtable_entry = classes_map
-        //     .get(current_class_name)
-        //     .unwrap()
-        //     .vtable_indices.get(method_name);
-
-        if let Some((i, class_owner_name)) = current_class.vtable_indices.get(method_name) {
-            current_class.vtable_indices.insert(method_name.clone(), (*i, class_owner_name.clone()));
-        } else {
-            let index = current_class.vtable_indices.len();
-            current_class.vtable_indices.insert(method_name.clone(), (index, current_class_name.clone()));
-        }
-
-        // if new_vtable_indices.contains_key(method_name) {
-        //     // We are overriding a function!
-        //     let curr_value = new_vtable_indices.get(method_name).unwrap();
-        //     new_vtable_indices.insert(method_name.clone(), (curr_value.0, current_class.clone()));
-        // } else {
-        //     let index = new_vtable_indices.len();
-        //     new_vtable_indices.insert(method_name.clone(), (index, current_class.clone()));
-        // }
-    }
-
-    // Overrite the class' vtable indices (did it this way due to borrowing weirdness)
-    // current_class.vtable_indices = new_vtable_indices;
-
-    // Recurse on the children to populate all the remaining indices
-    if let Some(children) = inheritance_graph.get(current_class_name) {
-        for child_class_name in children {
-            flatten_single_class(child_class_name, visited, inheritance_graph, classes_map);
-        }
+                    Function {
+                        name: func_name.clone(),
+                        arg_types: func_args,
+                        return_type: func_return_type,
+                        body: Box::new(func_body_expr),
+                    }
+                } else {
+                    panic!("{}", err_msg);
+                }
+            }
+            _ => panic!("{}", err_msg),
+        },
     }
 }
 
 pub fn parse_prog(s: &Sexp) -> Program {
-    // First go through program looking for function, record definitions, class definitions to fill in signatures
-    // let mut function_signatures: HashMap<String, FunctionSignature> = HashMap::new();
-    // let mut record_signatures: HashMap<String, Record> = HashMap::new();
-    // let mut class_signatures: HashMap<String, ClassSignature> = HashMap::new();
-
-    // let mut func_signatures: HashMap<FunctionSignature> = Vec::new();
-    // let mut record_signatures: Vec<RecordSignature> = Vec::new();
-    // let mut class_signatures: Vec<ClassSignature> = Vec::new();
-
-    // let mut parsed_func_signatures: HashSet<String> = HashSet::new();
-    // let mut parsed_record_signatures: HashSet<String> = HashSet::new();
-    // let mut parsed_class_signatures: HashSet<String> = HashSet::new();
-
-    // if let Sexp::List(vec) = s {
-    //     for s1 in vec {
-    //         if let Sexp::List(sub_vec) = s1 {
-    //             if sub_vec.len() == 0 {
-    //                 panic!("Invalid: empty expression");
-    //             }
-    //             if let Sexp::Atom(S(name)) = &sub_vec[0] {
-    //                 if name == "fun" {
-    //                     let func_signature = parse_func_signature(s1);
-    //                     if function_signatures
-    //                         .insert(func_signature.name.clone(), func_signature.clone())
-    //                         .is_some()
-    //                     {
-    //                         panic!("Duplicate function definition: {}", func_signature.name);
-    //                     }
-    //                 } else if name == "record" {
-    //                     let record_signature = parse_record(s1);
-    //                     if record_signatures
-    //                         .insert(record_signature.name.clone(), record_signature.clone())
-    //                         .is_some()
-    //                     {
-    //                         panic!("Duplicate record definition: {}", record_signature.name);
-    //                     }
-    //                 } else if name == "class" {
-    //                     let class_signature = parse_class_signature(s1);
-
-    //                     if class_signature.inherits != BASE_CLASS_NAME
-    //                         && !class_signatures.contains_key(&class_signature.inherits)
-    //                     {
-    //                         panic!(
-    //                             "Could not find inherited class: {}",
-    //                             class_signature.inherits
-    //                         );
-    //                     }
-
-    //                     if class_signatures
-    //                         .insert(class_signature.name.clone(), class_signature.clone())
-    //                         .is_some()
-    //                     {
-    //                         panic!("Duplicate class definition: {}", class_signature.name);
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-
-    // // Build up program with parsed function bodies, class method bodies
-    // let mut parse_ctx = ProgDefns {
-    //     fn_signatures: function_signatures,
-    //     record_signatures: record_signatures,
-    //     class_signatures: class_signatures,
-    // };
-
-    let mut records: HashMap<String, Record> = HashMap::new();
-    let mut functions: HashMap<String, Function> = HashMap::new();
-    let mut classes: HashMap<String, Class> = HashMap::new();
-    let mut main_expr: Option<Box<Expr>> = None;
+    let mut prog = Program::new();
 
     // Keep track of names so that we know what type of object we're instantiating, do 1
     // pass over the program to just get the names of all the records, functions, and classes
-    let mut defns = ProgDefns {
-        record_names: HashSet::new(),
-        class_names: HashSet::new(),
-        function_names: HashSet::new(),
-    };
+    let mut symbol_table = SymbolTable::new();
 
     if let Sexp::List(vec) = s {
         for s1 in vec {
             if let Sexp::List(sub_vec) = s1 {
                 if sub_vec.len() == 0 {
-                    panic!("Invalid: empty expression");
+                    panic!("Malformed program: empty expression");
                 } else if sub_vec.len() < 2 {
                     continue;
                 }
 
                 match (&sub_vec[0], &sub_vec[1]) {
                     (Sexp::Atom(S(identifier)), Sexp::Atom(S(name))) => {
-                        match (identifier.as_str(), name.as_str()) {
-                            ("record", record_name) => {
-                                defns.record_names.insert(record_name.to_string());
-                            }
-                            ("fun", func_name) => {
-                                defns.function_names.insert(func_name.to_string());
-                            }
-                            ("class", class_name) => {
-                                defns.class_names.insert(class_name.to_string());
-                            }
-                            _ => (),
+                        if let Some(s) = SymbolType::from_stringified_type(identifier, name) {
+                            symbol_table.insert(name, s);
                         }
-                    },
-                    _ => (),
+                    }
+                    _ => {}
                 }
             }
         }
     }
 
+    // Go through the program parsing all function bodies, method bodies, and the main expression
     match s {
         Sexp::Atom(_) => panic!("Malformed program"),
         Sexp::List(vec) => {
@@ -833,45 +438,16 @@ pub fn parse_prog(s: &Sexp) -> Program {
                 match s1 {
                     Sexp::Atom(_) => {
                         // This is when the main expression is just a value like a number or boolean
-                        main_expr = Some(Box::new(parse_expr(s1, &defns)));
+                        prog.set_main_expr(parse_expr(s1, &symbol_table));
                     }
                     Sexp::List(sub_vec) => match &sub_vec[0] {
-                        Sexp::Atom(S(name)) if name == "fun" => {
-                            let func = parse_func_defn(s1, &defns);
-                            let name = func.name.clone();
-
-                            println!("Parsed function: {:?}", func.body);
-
-                            if functions.insert(name.clone(), func).is_some() {
-                                panic!("Duplicate function definition: {}", name);
-                            }
-                        }
-                        Sexp::Atom(S(name)) if name == "record" => {
-                            let record = parse_record_defn(s1, &defns);
-                            let name = record.name.clone();
-
-                            if records
-                                .insert(name.clone(), record)
-                                .is_some()
-                            {
-                                panic!("Duplicate record definition: {}", name);
-                            }
-                        }
-                        Sexp::Atom(S(name)) if name == "class" => {
-                            let class = parse_class_defn(s1, &defns);
-                            let name = class.name.clone();
-
-                            if classes
-                                .insert(class.name.clone(), class)
-                                .is_some()
-                            {
-                                panic!("Duplicate class definition: {}", name);
-                            }
-                        }
-                        Sexp::Atom(_) => {
-                            main_expr = Some(Box::new(parse_expr(s1, &defns)));
-                        }
-                        _ => panic!("Malformed program"),
+                        Sexp::Atom(S(name)) => match name.as_str() {
+                            "fun" => prog.add_function(parse_func_defn(s1, &symbol_table)),
+                            "record" => prog.add_record(parse_record_defn(s1, &symbol_table)),
+                            "class" => prog.add_class(parse_class_defn(s1, &symbol_table)),
+                            _ => prog.set_main_expr(parse_expr(s1, &symbol_table)),
+                        },
+                        _ => panic!("Invalid program: malformed program"),
                     },
                 }
             }
@@ -880,18 +456,6 @@ pub fn parse_prog(s: &Sexp) -> Program {
 
     // This step will populate each class's vtable map, which
     // stores an index for each method that it defines and inherits
-    let inheritance_graph = create_inheritance_graph(&classes);
-
-    println!("inheritance_graph: {:?}", inheritance_graph);
-    println!("main expr: {:?}", main_expr);
-
-    flatten_all_classes(&mut classes, &inheritance_graph);
-
-    Program {
-        functions: functions,
-        classes: classes,
-        records: records,
-        main_expr: main_expr.expect("Main expression not found"),
-        inheritance_graph: inheritance_graph,
-    }
+    prog.populate_inherited_vars_methods();
+    prog
 }
