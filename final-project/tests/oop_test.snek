@@ -1,0 +1,94 @@
+(record linked_list_node  ((val int) (next linked_list_node)))
+
+(class Array Object
+    (instance_vars
+        (list_head linked_list_node)
+    )
+
+    (method_list
+        (fun insert ((val int)) int
+            (let ((head (lookup self list_head)))
+                (block
+                    (if
+                        (= head NULL)
+                        (set! self list_head (linked_list_node val NULL))
+                        (set! self list_head (linked_list_node val head))
+                    )
+                    val
+                )
+            )
+        )
+        (fun contains_helper ((curr linked_list_node) (key int)) bool
+            (if
+                (= curr NULL)
+                false
+                (if
+                    (= key (lookup curr val))
+                    true
+                    (call self contains_helper (lookup curr next) key)
+                )
+            )
+        )
+        (fun contains ((key int)) bool
+            (call self contains_helper (lookup self list_head) key)
+        )
+        (fun print_helper ((curr linked_list_node)) int
+            (if
+                (= curr NULL)
+                0
+                (block
+                    (print (lookup curr val))
+                    (call self print_helper (lookup curr next))
+                )
+            )
+        )
+        (fun print_array () int
+            (call self print_helper (lookup self list_head))
+        )
+    )
+)
+
+(class Set Array
+    (instance_vars)
+    (method_list
+        (fun insert ((val int)) int
+            (let ((head (lookup self list_head)))
+                (block
+                    (if
+                        (= head NULL)
+                        (set! self list_head (linked_list_node val NULL))
+                        (if
+                            (= (call self contains val) true)
+                            head
+                            (set! self list_head (linked_list_node val head))
+                        )
+                    )
+                    val
+                )
+            )
+        )
+    )
+)
+
+(let
+    (
+        (my_array (Array NULL))
+        (my_set (Set NULL))
+        (i 0)
+    )
+    (block
+        (repeat-until
+            (block
+                (call my_array insert 111)
+                (call my_set insert 333)
+                (set! i (add1 i))
+            )
+            (= i 5)
+        )
+
+        (call my_array print_array)
+        (call my_set print_array)
+
+        0
+    )
+)

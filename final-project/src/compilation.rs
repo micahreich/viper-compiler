@@ -386,7 +386,7 @@ fn compile_heap_allocated_set_field<T: HeapAllocated>(
         let rbp_offset_field_expr_eval = ctx.push_reg_to_stack(Reg::RAX);
 
         let expected_return_type_field_expr = field_types[idx].1.clone();
-        if return_type_field_expr != expected_return_type_field_expr {
+        if !program.expr_a_subtypes_b(&return_type_field_expr, &expected_return_type_field_expr) {
             panic!("Invalid: set! on record for field does not match record signature,
                     expected {expected_return_type_field_expr:?} but got {return_type_field_expr:?}");
         }
@@ -1308,6 +1308,9 @@ fn compile_main_expr_to_instrs(
 /// record pointers/fields in the record
 fn compile_heap_obj_rc_decr_function_to_instrs(e: &dyn HeapAllocated, ctx: &mut CompileCtx) {
     ctx.clear_instrs();
+    ctx.clear_scope();
+    ctx.reset_rbp_offset(0);
+    ctx.reset_rbx_offset(0);
 
     ctx.instr_vec.push(Instr::IEnter(16));
     let record_addr_offset = ctx.push_reg_to_stack(Reg::RDI);
@@ -1379,6 +1382,9 @@ fn compile_heap_obj_rc_decr_function_to_instrs(e: &dyn HeapAllocated, ctx: &mut 
 
 fn compile_heap_print_function(e: &dyn HeapAllocated, ctx: &mut CompileCtx) {
     ctx.clear_instrs();
+    ctx.clear_scope();
+    ctx.reset_rbp_offset(0);
+    ctx.reset_rbx_offset(0);
 
     ctx.instr_vec.push(Instr::IEnter(0));
 

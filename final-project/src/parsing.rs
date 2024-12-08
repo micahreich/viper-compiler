@@ -162,32 +162,67 @@ pub fn parse_expr(s: &Sexp, symbol_table: &SymbolTable) -> Expr {
                 Sexp::Atom(S(val)) if val == "call" => {
                     // Parse method calls as let __tmp = eval e1 in __tmp.method_name(e2, e3, ...) end
                     // With additional `self` / object pointer as first argument
-                    if let Sexp::Atom(S(method_name)) = &vec[2] {
-                        println!("Parsing a call to method: {method_name} on {:?}", vec[1]);
 
-                        if let Expr::Id(name) = &parse_expr(&vec[1], symbol_table) {
+                    if let Sexp::Atom(S(method_name)) = &vec[2] {
+                        let e1_parsed = parse_expr(&vec[1], symbol_table);
+
+                        if let Expr::Id(name) = e1_parsed {
                             let args: Vec<Expr> = vec![Expr::Id(name.clone().into())]
                                 .into_iter()
                                 .chain(vec.iter().skip(3).map(|e| parse_expr(e, symbol_table)))
                                 .collect();
                             
                             return Expr::CallMethod(
-                                name.clone().into(),
+                                name.into(),
                                 method_name.clone(),
                                 args,
                             )
                         } else {
-                            panic!("Method names must be provided at compile time when calling")
-                        }
-                        // Expr::CallMethod(vec[1].clone().into(), method_name.clone(), args)
+                            let args: Vec<Expr> = vec![Expr::Id("__tmp".into())]
+                                .into_iter()
+                                .chain(vec.iter().skip(3).map(|e| parse_expr(e, symbol_table)))
+                                .collect();
 
-                        // Expr::Let(
-                        //     vec![("__tmp".into(), parse_expr(&vec[1], symbol_table))],
-                        //     Box::new(Expr::CallMethod("__tmp".into(), method_name.clone(), args)),
-                        // )
+                            Expr::Let(
+                                vec![("__tmp".into(), e1_parsed)],
+                                Box::new(
+                                    Expr::CallMethod(
+                                        "__tmp".into(),
+                                        method_name.clone(),
+                                        args
+                                    )
+                                ),
+                            )
+                        }
                     } else {
                         panic!("Method names must be provided at compile time when calling")
                     }
+                    // if let Sexp::Atom(S(method_name)) = &vec[2] {
+                    //     println!("Parsing a call to method: {method_name} on {:?}", vec[1]);
+
+                    //     if let Expr::Id(name) = &parse_expr(&vec[1], symbol_table) {
+                    //         let args: Vec<Expr> = vec![Expr::Id(name.clone().into())]
+                    //             .into_iter()
+                    //             .chain(vec.iter().skip(3).map(|e| parse_expr(e, symbol_table)))
+                    //             .collect();
+                            
+                    //         return Expr::CallMethod(
+                    //             name.clone().into(),
+                    //             method_name.clone(),
+                    //             args,
+                    //         )
+                    //     } else {
+                    //         panic!("Method names must be provided at compile time when calling")
+                    //     }
+                    //     // Expr::CallMethod(vec[1].clone().into(), method_name.clone(), args)
+
+                    //     // Expr::Let(
+                    //     //     vec![("__tmp".into(), parse_expr(&vec[1], symbol_table))],
+                    //     //     Box::new(Expr::CallMethod("__tmp".into(), method_name.clone(), args)),
+                    //     // )
+                    // } else {
+                    //     panic!("Method names must be provided at compile time when calling")
+                    // }
                 }
                 Sexp::Atom(S(name)) => {
                     let mut args = Vec::new();
