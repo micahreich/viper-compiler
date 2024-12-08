@@ -19,14 +19,6 @@ pub extern "C" fn snek_error(errcode: i64) {
         _ => eprintln!("an error ocurred: unknown error"),
     }
 
-    // let err_string = match errcode {
-    //     1 => "failed to parse input as u64",
-    //     2 => "unknown type flag",
-    //     3 => "overflow error",
-    //     _ => "unknown error",
-    // };
-    
-    // eprintln!("an error ocurred: {}", err_string);
     std::process::exit(1);
 }
 
