@@ -6,8 +6,8 @@ pub const MAIN_FN_TAG: &str = "our_code_starts_here";
 pub type VariableScope = HashMap<String, (i32, ExprType)>;
 pub const SIZE_OF_DWORD: i32 = 8;
 
-pub const MAX_HEAP_SIZE_R12_OFFSET: i32 = -2 * SIZE_OF_DWORD;
-pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -3 * SIZE_OF_DWORD;
+pub const MAX_HEAP_SIZE_R12_OFFSET: i32 = -3 * SIZE_OF_DWORD;
+pub const CURRENT_HEAP_SIZE_R12_OFFSET: i32 = -4 * SIZE_OF_DWORD;
 
 pub const BASE_CLASS_NAME: &str = "Object";
 

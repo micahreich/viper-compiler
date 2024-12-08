@@ -1,8 +1,50 @@
 (class ClassA Object
     (instance_vars
-        (x int)
+        (counter int)
     )
     (method_list
-    
+        (fun increment_counter () int
+            (block
+                (set! self counter (+ (lookup self counter) 1))
+                (lookup self counter)
+            )
+        )
+        (fun reset_counter () int
+            (block
+                (set! self counter 0)
+                (lookup self counter)
+            )
+        )
+    )
+)
+
+(class ClassB ClassA
+    (instance_vars
+        (factor int)
+    )
+    (method_list
+        (fun increment_counter () int
+            (block
+                (set! self counter (+ (lookup self counter) (lookup self factor)))
+                (lookup self counter)
+            )
+        )
+        (fun set_factor ((new_factor int)) int
+            (block
+                (set! self factor new_factor)
+                (lookup self factor)
+            )
+        )
+    )
+)
+
+(let
+    (
+        (base (ClassA 0))
+        (derived (ClassB 0 2))
+    )
+    (block
+        (print (call derived increment_counter))
+        0
     )
 )

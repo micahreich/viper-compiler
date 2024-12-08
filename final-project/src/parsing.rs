@@ -1,11 +1,10 @@
 use core::panic;
-use std::collections::{HashMap, HashSet};
-// use prettydiff::format_table::new;
-use crate::utils::{self, format_method_name_label, is_valid_identifier};
 use sexp::Atom::*;
 use sexp::*;
+use std::collections::HashMap;
 
 use crate::types::*;
+use crate::utils;
 
 pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, symbol_table: &SymbolTable) -> Expr {
     match b_vec_sexp {
@@ -14,7 +13,7 @@ pub fn parse_let_expr(b_vec_sexp: &Sexp, expr_sexp: &Sexp, symbol_table: &Symbol
                 match sexp_list {
                     Sexp::List(vec) => match &vec[..] {
                         [Sexp::Atom(S(identifier)), e] => {
-                            if !is_valid_identifier(identifier) {
+                            if !utils::is_valid_identifier(identifier) {
                                 panic!("Reserved keyword or invalid identifier used as variable name in let expression: {identifier}");
                             }
 
@@ -212,7 +211,7 @@ pub fn parse_argument(s: &Sexp, symbol_table: &SymbolTable) -> (String, ExprType
 
             match (&vec[0], &vec[1]) {
                 (Sexp::Atom(S(name)), Sexp::Atom(S(type_name))) => {
-                    if !is_valid_identifier(name) {
+                    if !utils::is_valid_identifier(name) {
                         panic!("Reserved keyword or invalid identifier used as variable name in function argument: {name}");
                     }
 
