@@ -1,10 +1,13 @@
 <!-- Logo and Title Section -->
-<h1 align="center">🐍  Viper: Language & Compiler</h1>
+<h1 align="center">🐍  Viper: Language & Compiler
 
 <div align="center">
   <a href="#"><img src="https://img.shields.io/badge/Rust-%23000000.svg?e&logo=rust&logoColor=white" alt="Rust"></a>
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License">
 </div>
+
+
+</h1>
 
 ## Introduction
 
